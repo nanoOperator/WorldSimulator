@@ -132,13 +132,18 @@ python3 data/build_seed.py              # rebuild the canonical database
 
 ---
 
-## Device requirements
+## Minimum requirements
 
-WorldSimulator runs fully on every supported device. There are no tiers and no
-feature is held back: live news fetching, the three local AI models
-(mustafakemal, inalcik, ortayli), scenario branching, and the 2.5D map all work
-on macOS, Windows, and Linux. Everything stays local and offline; no cloud, no
-API keys, no telemetry.
+| | |
+|---|---|
+| Memory | 8 GB RAM |
+| Processor | Apple M1, or equivalent Intel / AMD (x86_64) |
+| Storage | ~10 GB available |
+| OS | macOS 12+, Windows 10+, or Linux (glibc 2.31+) |
+
+All features run on this minimum: live news, the three local AI models
+(mustafakemal, inalcik, ortayli), scenario branching, and the 2.5D map.
+Everything stays local and offline — no cloud, no API keys, no telemetry.
 
 ---
 
