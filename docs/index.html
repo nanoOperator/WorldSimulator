@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WorldSimulator 1.0.0 — Hold the history of the world</title>
+<style>
+  :root{
+    --ink:#2b2118; --paper:#f3e9d2; --paper2:#ece0c4; --accent:#7a4a1e; --line:#c9b48a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    line-height:1.6;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:48px 24px 80px;}
+  header{border-bottom:3px double var(--line);padding-bottom:24px;margin-bottom:32px;text-align:center;}
+  header h1{font-size:42px;margin:0 0 6px;letter-spacing:1px;}
+  header .sub{font-style:italic;color:var(--accent);font-size:18px;}
+  h2{margin-top:40px;border-bottom:1px solid var(--line);padding-bottom:6px;font-size:24px;}
+  h3{color:var(--accent);}
+  p{font-size:16.5px;}
+  code{background:var(--paper2);padding:1px 5px;border-radius:3px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;}
+  pre{background:var(--paper2);padding:14px 16px;border:1px solid var(--line);border-radius:6px;overflow:auto;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;}
+  th{background:var(--paper2);}
+  .downloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:24px 0;}
+  .dl{
+    display:block;text-align:center;text-decoration:none;color:var(--paper);
+    background:var(--accent);border:1px solid #5c3614;border-radius:8px;
+    padding:16px 10px;font-weight:600;box-shadow:0 2px 0 #5c3614;
+  }
+  .dl small{display:block;font-weight:400;opacity:.85;margin-top:4px;}
+  .dl:hover{background:#8a5526;}
+  .note{background:var(--paper2);border-left:4px solid var(--accent);padding:10px 14px;font-size:14px;}
+  footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;font-size:13px;text-align:center;color:#6b5a44;}
+  .timeline{font-style:italic;color:#5c4a36;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>WorldSimulator</h1>
+    <div class="sub">Hold the history of the world — from the first fire to the present — and ask &ldquo;what if?&rdquo;</div>
+    <div class="timeline">Version 1.0.0 · Local · Offline · Three on-device AI minds</div>
+  </header>
+
+  <h2>Download</h2>
+  <p>WorldSimulator runs fully on every device. There are no tiers and no feature is held back:
+     live news, the three local AI models, scenario branching, and the 2.5D map all work on
+     macOS, Windows, and Linux. Everything stays on your machine.</p>
+  <div class="downloads">
+    <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/releases/download/v1.0.0/WorldSimulator_1.0.0_aarch64.dmg">macOS<small>.dmg (Apple Silicon)</small></a>
+    <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/releases/download/v1.0.0/WorldSimulator_1.0.0_x64-setup.exe">Windows<small>.exe installer</small></a>
+    <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/releases/download/v1.0.0/WorldSimulator_1.0.0_amd64.AppImage">Linux<small>.AppImage</small></a>
+    <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/releases/download/v1.0.0/worldsimulator-web-1.0.0.zip">Web build<small>.zip (static site + server)</small></a>
+  </div>
+  <p class="note">All binaries are produced from the tagged source by the project's release workflow.
+     If a platform asset is not yet available, see the
+     <a href="https://github.com/nanoOperator/WorldSimulator/releases/tag/v1.0.0">v1.0.0 release page</a>
+     or build it yourself with one command: <code>cd app &amp;&amp; npm install &amp;&amp; npm run tauri build</code>.</p>
+
+  <h2>What it is</h2>
+  <p>WorldSimulator is a local, offline desktop application that simulates alternate history. You
+     type a divergence (&ldquo;what if the Nazis won World War II?&rdquo;, &ldquo;what if Rome never fell?&rdquo;)
+     and the engine reasons about the consequences, branches the timeline into several plausible
+     outcomes, and renders the changing world on an interactive 2.5‑dimensional map.</p>
+  <p>Everything runs on your machine. No cloud, no API keys, no telemetry. The intelligence comes
+     from three small language models that are fine‑tuned for this exact job and bundled with the app.</p>
+
+  <h2>The three minds</h2>
+  <table>
+    <tr><th>Name</th><th>Base model</th><th>Role</th></tr>
+    <tr><td><b>mustafakemal</b></td><td>Qwen3‑8B (qLoRA, Q4_K_M)</td><td>Causal simulation — the strategist.</td></tr>
+    <tr><td><b>inalcik</b></td><td>Qwen2.5‑3B (qLoRA, Q4_K_M)</td><td>Data &amp; statistics — the accountant.</td></tr>
+    <tr><td><b>ortayli</b></td><td>Qwen3‑Embedding‑0.6B (qLoRA, Q4_K_M)</td><td>Retrieval — the librarian.</td></tr>
+  </table>
+
+  <h2>What you can do</h2>
+  <ul>
+    <li><b>Diverge.</b> Type a prompt → a scenario is created at a divergence date and simulated forward to 2100 across several parallel branches.</li>
+    <li><b>Explore the map.</b> Territories are 2.5D blocks, colored by owner and raised by population. Pan, zoom, tilt, and click.</li>
+    <li><b>Scroll time.</b> The timeline spans two million years with era markers.</li>
+    <li><b>Compare branches.</b> Each branch is diffed against the canonical world.</li>
+    <li><b>Predict the future.</b> Live RSS news is fetched, scored for trust, and can be seeded into a near‑future scenario.</li>
+    <li><b>Stay offline.</b> No network call is required at runtime.</li>
+  </ul>
+
+  <h2>Quick start (from source)</h2>
+  <pre>cd app
+npm install
+npm run tauri dev          # desktop window
+
+# or headless / web server:
+python3 data/build_seed.py
+WSIM_DB=data/out/worldsim.db WSIM_MODELS=models cargo run -p worldsim-server</pre>
+
+  <h2>License</h2>
+  <p>MIT. Free to use, modify, and redistribute.</p>
+
+  <p style="text-align:center;margin-top:32px;">
+    <a href="https://github.com/nanoOperator/WorldSimulator">GitHub repository</a> ·
+     <a href="https://github.com/nanoOperator/WorldSimulator/releases/tag/v1.0.0">v1.0.0 release</a> ·
+     <a href="https://github.com/nanoOperator/WorldSimulator/blob/main/README.md">Full README</a>
+  </p>
+
+  <footer>WorldSimulator · A local museum of alternate worlds · 1.0.0</footer>
+</div>
+</body>
+</html>
