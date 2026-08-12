@@ -1,0 +1,320 @@
+ARCHITECTURE
+============
+
+WorldSimulator - technical design overview.
+
+TABLE OF CONTENTS
+-----------------
+1. System overview
+2. Technology stack
+3. Repository layout
+4. Data layer
+5. Simulation engine
+6. AI model layer
+7. Map rendering
+8. Scenario management
+9. News ingestion and future prediction
+10. User interface
+11. Performance and hardware targets
+12. Build, release, and distribution
+13. Open questions and risks
+
+------------------------------------------------------------------------
+1. SYSTEM OVERVIEW
+------------------------------------------------------------------------
+
+WorldSimulator is a desktop application that stores the full written
+history of the world (3200 BCE to present) and simulates alternate
+histories and future predictions using two local LLMs.
+
+High-level flow:
+
+  User prompt ("What if the Nazis won in 1943?")
+    -> Scenario created with divergence point 1943
+    -> Engine replays canonical history up to 1943 (hard lock)
+    -> Engine enters adaptive simulation loop from 1943 forward:
+         extract state snapshot
+         -> 7B model plans causal events (narrative + structured JSON)
+         -> 3B model generates statistics/numbers
+         -> constraint engine validates and auto-fixes
+         -> self-check pass verifies numbers
+         -> apply diffs to state
+         -> record full causal log
+    -> Multiple outcome branches may be produced in parallel/background
+    -> UI shows live progress box, streaming events and stats
+    -> Borders/stats rendered on 2.5D map at the current date
+
+Every scenario is a divergence layered on top of an immutable
+canonical timeline. Nothing before the divergence point can be edited.
+
+------------------------------------------------------------------------
+2. TECHNOLOGY STACK
+------------------------------------------------------------------------
+
+Language:      Rust (backend/engine), TypeScript/React (frontend)
+Shell:         Tauri
+Frontend:      React
+Rendering:     WebGL via MapLibre GL + Deck.gl (2.5D terrain, elevation)
+Database:      SQLite + SpatiaLite (embedded, zero-config)
+Inference:     llama.cpp (bundled)
+Models:        Qwen3-8B (7B-class, causal simulation) and
+               Qwen 2.5-3B (data/statistics), qLoRA fine-tuned,
+               quantized to GGUF Q4_K_M
+Data sources:  Public GIS datasets (Natural Earth and similar)
+
+Why Tauri + Rust: native performance for the simulation engine and
+map rendering, tiny binaries, direct llama.cpp embedding or process
+invocation, and SQLite/SpatiaLite integration without server setup.
+
+------------------------------------------------------------------------
+3. REPOSITORY LAYOUT
+------------------------------------------------------------------------
+
+  WorldSimulator/
+  ├── app/          Tauri shell + React frontend
+  │   ├── src/      React components, state store, map view
+  │   └── tauri/    Tauri configuration and native assets
+  ├── engine/       Rust simulation engine (crate)
+  │   ├── core/     world state model, step loop
+  │   ├── validate/ constraint engine, invariant checks
+  │   ├── causal/   causal log, audit records
+  │   └── apply/    diff application and auto-fix
+  ├── models/       bundled GGUF files, qLoRA recipes, eval harness
+  ├── data/         history DB builders, GIS ingestion, seed scripts
+  ├── news/         RSS aggregator, trust scoring, news->state seed
+  ├── scripts/      build, import, and release tooling
+  └── tests/        integration and performance tests
+
+------------------------------------------------------------------------
+4. DATA LAYER
+------------------------------------------------------------------------
+
+Storage: SQLite with SpatiaLite. Single database file per install plus
+per-scenario snapshot files. GB-scale canonical history.
+
+Canonical timeline (immutable):
+  - Table: events (id, date, type, title, body, structured_payload)
+  - Table: borders (event_id, territory_id, geometry, valid_from)
+  - Table: entities (nations, persons, techs, religions, groups)
+  - Table: facts_graph (entity_a, relation, entity_b, source_event)
+  - Table: tech (id, name, era, invention_date, adoption_curve)
+  - Table: census (event_id, region, population, religion_pct,
+           ethnicity_pct)   [per-country aggregates]
+  - Table: population_grid (date, cell, density)   [grid-based density]
+  - Table: migrations (event_id, from_region, to_region, amount)
+
+History is stored three ways simultaneously:
+  1. Structured events with typed payloads (wars, treaties, censuses).
+  2. Free-text event entries with date + tags.
+  3. Facts graph with causal relations between entities/events.
+
+Data granularity: borders change by event date (each treaty/annexation
+carries its own date), not merely per year.
+
+v1.0 ships the full timeline (3200 BCE to present). Early-history
+borders are sparser than modern ones but present.
+
+Scenarios:
+  - SQLite snapshot files containing only the diverged state on top of
+    the canonical timeline.
+  - The canonical timeline is never written by a scenario.
+
+------------------------------------------------------------------------
+5. SIMULATION ENGINE
+------------------------------------------------------------------------
+
+5.1 World state model
+  Mixed representation:
+  - Entity-component tables in SQLite (nations, persons, techs).
+  - Event-sourced diffs: the current state at date D is the canonical
+    timeline plus the scenario's applied diffs up to D.
+  - Schema-constrained JSON: the LLM emits structured actions that the
+    engine validates and applies.
+
+5.2 Step loop
+  For each simulated step:
+    1. EXTRACT   - build a state snapshot at the current date.
+    2. DECIDE    - 7B model produces planned causal events as
+                   narrative text + structured JSON payloads.
+    3. NUMBERS   - 3B model fills in statistics (population, economy,
+                   military, migration) for the planned events.
+    4. VALIDATE  - constraint engine checks invariants; auto-fixes
+                   simple violations (e.g., sums that do not balance,
+                   non-contiguous borders, negative values).
+    5. RETRY     - unresolved violations are reported back to the LLM
+                   with a description; the LLM regenerates the step.
+    6. SELF-CHECK- a second model pass verifies the numbers of the
+                   first pass; disagreements are flagged or fixed.
+    7. APPLY     - validated diffs are applied to the scenario state.
+    8. LOG       - every applied event records parent events, the
+                   prompt context, and model IDs (full causal log).
+
+  The models are also instructed to reason about second-order effects:
+  riots, guerrilla movements, rebellions, insurgencies, economic
+  collapse, famine, refugee flows. These are first-class events, not
+  decorations.
+
+5.3 Adaptive stepping
+  Time steps are adaptive:
+  - Far from the divergence point or major events: coarse steps.
+  - Near the divergence point or during crises/wars: fine detail.
+  - The 3B model extrapolates intermediate values from historical
+    curves for coarse-step gaps.
+
+5.4 Determinism
+  Non-deterministic by design. Each run may explore a different
+  plausible branch. Users may keep a single branch or multiple ones.
+  Branch outcomes are produced in parallel where resources allow.
+
+5.5 Immutability
+  Hard lock: the engine refuses any write before the scenario's
+  divergence point. Pre-divergence events replay exactly from the
+  canonical timeline. Violations are rejected in code, not just by
+  prompt.
+
+5.6 Constraint engine
+  Invariants validated each step:
+  - Border contiguity and geometry sanity.
+  - Population: non-negative; sub-population sums approximate totals.
+  - Census religion/ethnicity percentages sum to ~100%.
+  - Migration inflows/outflows balance per region.
+  - Tech adoption curves are monotonic and bounded.
+  - No writes before divergence point.
+
+------------------------------------------------------------------------
+6. AI MODEL LAYER
+------------------------------------------------------------------------
+
+Models (both GGUF Q4_K_M, bundled with the installer):
+  - 7B-class: Qwen3-8B base, qLoRA fine-tuned for causal simulation.
+    Handles harder jobs: causal chains, geopolitics, second-order
+    effects, long-horizon planning.
+  - 3B-class: Qwen 2.5-3B base, qLoRA fine-tuned for data/statistics.
+    Produces quantitative outputs: population, economy, migration,
+    adoption curves, census data.
+
+Cooperation model: dynamic routing. The 7B model gets the harder
+tasks (planning, causality, verification); the 3B model handles
+cheaper bulk data generation. A router component assigns work based
+on task difficulty.
+
+Inference: llama.cpp. Embedded or spawned as a sidecar process by the
+Tauri backend. Runs fully locally; no cloud dependency.
+
+Training data (qLoRA), mixed:
+  - Synthetic scenarios generated with stronger frontier models.
+  - Community-contributed what-if scenarios.
+  - Curated historical counterfactuals from historians.
+
+Output contract: the models emit narrative text plus a strict
+structured JSON payload (schema-constrained). The engine parses and
+validates the JSON; free text is stored for the user-facing history.
+
+------------------------------------------------------------------------
+7. MAP RENDERING
+------------------------------------------------------------------------
+
+- MapLibre GL with Deck.gl layers, WebGL, 2.5D rendering: terrain,
+  mountains, elevation shading.
+- Base terrain/topography from Natural Earth vectors bundled offline.
+- Political borders drawn from the canonical or scenario border tables
+  at the currently selected date.
+- Simulated (diverged) territories get distinct color tints so users
+  can see where reality and the scenario differ.
+- Overlay mode renders two scenarios on one map with semi-transparent
+  borders for comparison.
+- Timelapse export renders map frames into a video.
+
+------------------------------------------------------------------------
+8. SCENARIO MANAGEMENT
+------------------------------------------------------------------------
+
+- Create a scenario from a divergence point.
+- Prompt the divergence ("What if the Nazis won in 1943?").
+- Edit scenario metadata and re-run or extend simulations.
+- Branching: tree/graph view of forks; each fork is a simulation
+  outcome. Keep one branch or keep many.
+- Compare: overlay borders on one map; diff statistics tables.
+- Save/load: SQLite snapshots; full world state per scenario.
+- Export: video/timelapse animation and HTML reports.
+- Causal log: inspect why any event happened (parent chain).
+
+------------------------------------------------------------------------
+9. NEWS INGESTION AND FUTURE PREDICTION
+------------------------------------------------------------------------
+
+- RSS aggregation with scheduled polling across configured outlets.
+- Trust scoring: outlet credibility, article recency, cross-source
+  dedup. User can override source trust.
+- News is converted into structured world-state seeds (events applied
+  to the canonical timeline) AND kept as raw text context for prompts.
+- Future prediction: seed current state, then run the same adaptive
+  step loop forward into the future.
+- What-if on current events: same pipeline, with the divergence point
+  set to "today".
+
+------------------------------------------------------------------------
+10. USER INTERFACE
+------------------------------------------------------------------------
+
+Layout: map center stage, side panels (scenario list, world stats,
+causal log), bottom timeline strip, prompt box below.
+
+Timeline controls:
+  - Play/pause/speed auto-scroll.
+  - Go-to-date jump.
+  - Snap to next/prev change (divergence event).
+
+Progress box during simulation:
+  - Streaming year-by-year event feed.
+  - Updating statistics panel and live map borders.
+
+Divergence markers on the timeline; scenario tree/graph in a panel.
+
+------------------------------------------------------------------------
+11. PERFORMANCE AND HARDWARE TARGETS
+------------------------------------------------------------------------
+
+Target: a full scenario run in roughly 2 minutes on the budget tier.
+
+  Budget: 8 GB RAM, Apple M1 / 4-core x86 CPU, no GPU, 10 GB disk.
+    - 7B model on CPU. Scenario ~2 minutes.
+  Mid:    16 GB RAM, M1 Pro / RTX 3060, 15 GB disk.
+    - Partial GPU offload; typically under 2 minutes.
+  High:   32 GB RAM, M2 Pro / RTX 4070+, 20 GB disk.
+    - Full GPU offload; fastest.
+
+Models (Q4_K_M) account for ~5-6 GB of disk. Performance targets are
+met by adaptive stepping (fewer expensive steps), dynamic model
+routing (3B handles bulk work), and parallel/background branch
+simulation.
+
+------------------------------------------------------------------------
+12. BUILD, RELEASE, AND DISTRIBUTION
+------------------------------------------------------------------------
+
+- v1.0 ships release binaries for macOS, Windows, and Linux via GitHub
+  Releases.
+- Models bundled in the installer (offline capable).
+- License: MIT. Repo: public.
+
+Release pipeline:
+  1. Build Rust engine crate + Tauri app.
+  2. Run integration tests and a performance benchmark gate
+     (scenario must complete within the budget-tier time budget).
+  3. Produce platform installers.
+  4. Publish release with bundled GGUF models and data seed.
+
+------------------------------------------------------------------------
+13. OPEN QUESTIONS AND RISKS
+------------------------------------------------------------------------
+
+- Data licensing for border datasets beyond Natural Earth.
+- Sourcing and verification effort for GB-scale 3200 BCE-present
+  border data (largest build risk).
+- 2-minute scenario budget on budget-tier CPUs requires early
+  benchmark-driven tuning of step granularity and context windows.
+- Training the two qLoRA models is a major data-generation effort;
+  model quality gates (consistency, causality) are needed.
+- News ingestion legality: store and attribute per outlet terms.
+- 2.5D map performance on budget-tier integrated GPUs.

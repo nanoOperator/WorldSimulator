@@ -1,0 +1,36 @@
+# Rust
+/target
+Cargo.lock
+
+# Node / Tauri
+node_modules
+dist
+app/dist
+app/node_modules
+app/src-tauri/target
+
+# Build artifacts
+*.log
+*.gguf
+models/*.bin
+
+# Local data / databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+data/cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env and secrets
+.env
+.env.*
