@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/engine", "crates/server"]
+default-members = ["crates/engine", "crates/server"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/nanoOperator/WorldSimulator"
+
+[profile.release]
+lto = true
+codegen-units = 1

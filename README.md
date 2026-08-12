@@ -1,108 +1,165 @@
-# WorldSimulator
+# 🌍 WorldSimulator
 
-WorldSimulator is a desktop application that holds the full written history of the world - from the first Sumerian writing around 3200 BCE to the present day - and lets you diverge it.
+**Hold the entire history of the world — from the first controlled fire lit by
+*Homo erectus* two million years ago, to the present — and ask "what if?"**
 
-You type a change, for example "What if the Nazis won in 1943?", and two local LLMs cooperate to redraw the entire world: borders, inventions, religion, demographics, wars, unrest, and more, from the moment of divergence onward. Nothing before the divergence point is ever touched.
+WorldSimulator is a **local, offline desktop application** that simulates
+alternate history. You type a divergence ("what if the Nazis won World War
+II?", "what if Rome never fell?", "what if Columbus never reached the
+Americas?") and the engine reasons about the consequences, branches the
+timeline into several plausible outcomes, and renders the changing world on an
+interactive 2.5‑dimensional map.
 
-The app also runs future-prediction simulations. It can ingest live news via RSS and simulate where the world is heading, or answer what-if questions about ongoing events, such as "What if the USA conquers Iran?".
+Everything runs **on your machine**. No cloud, no API keys, no telemetry. The
+intelligence comes from three small language models that are fine‑tuned for
+this exact job and bundled with the app.
 
-## Features
+---
 
-- Full world map, rendered in 2.5D (terrain, mountains, elevation) with real borders and country boundaries for every recorded date from 3200 BCE to the present.
-- Timeline scrollers with auto-scroll, play/pause/speed controls, go-to-date, and snap-to-change.
-- A prompt box where you describe a change; the simulation begins at your divergence point.
-- Multiple outcome branches per scenario. Branches can be explored side by side, kept, or discarded. A tree/graph view shows every fork.
-- Scenario management: create, save, edit, merge, compare, and overlay scenarios on one map.
-- Live progress box during simulation: streaming year-by-year event feed plus updating statistics and map.
-- Future prediction mode: fetches live news (RSS), converts it into a world-state seed, and simulates forward.
-- Full causal log: every simulated event records its parent events, so you can trace why something happened.
-- Export scenarios as video/timelapse animations and HTML reports.
-- Both models run locally; no cloud dependency.
+## Why it exists
 
-## How it works
+Most "alternate history" tools are toys or require sending your prompts to a
+remote GPU. WorldSimulator is different:
 
-WorldSimulator ships with two locally-run, qLoRA fine-tuned models in GGUF format (Q4_K_M):
+- It **starts at the deep past** (≈ 2,000,000 BCE — fire, migration out of
+  Africa, Neanderthals, the Agricultural Revolution, writing) and walks forward
+  through every major era to 2026.
+- It **never edits history before your divergence point**. The canonical
+  timeline is immutable; scenarios are layered on top of it.
+- It is **rigorous about cause and effect**, using a causal chain, a
+  self‑checking validator, and retrieval‑augmented planning so the model can
+  "remember" real history while inventing the branch.
+- It works even **without a GPU**: if the models aren't present, a fast
+  deterministic rule‑based simulator produces a believable world so the app is
+  never empty.
 
-- 7B-class model (Qwen3-8B base) - causal simulation. Reasons through the knock-on effects of a change across decades, and handles the harder planning tasks.
-- 3B-class model (Qwen 2.5-3B base) - data and statistics generation. Produces population figures, economic numbers, migration flows, and other quantitative detail.
+---
 
-Both run through llama.cpp, fully offline.
+## The three minds
 
-### Simulation model
+| Name | Base model | Role | Personality |
+|------|-----------|------|-------------|
+| **mustafakemal** | Qwen3‑8B (qLoRA, Q4_K_M) | Causal simulation | The strategist. Reasons about war, geopolitics, technology, demographics and second‑order consequences. Outputs the structured event stream. |
+| **inalcik** | Qwen2.5‑3B (qLoRA, Q4_K_M) | Data & statistics | The accountant. Fills in populations, migrations, economy/military indices and technology adoption so numbers stay internally consistent. |
+| **ortayli** | Qwen3‑Embedding‑0.6B (qLoRA, Q4_K_M) | Retrieval | The librarian. Embeds the canonical timeline and your scenario so planning can pull in the relevant real history. |
 
-The simulation is non-deterministic: each run may explore a different plausible timeline, and users can keep one branch or keep several.
+All three are fine‑tuned with qLoRA and exported to GGUF (Q4_K_M), then run
+locally through llama.cpp — the local inference backend that ships with the
+app. See `models/` for the full training + export pipeline.
 
-Time is stepped adaptively: years far from changes pass coarsely, and time near the divergence point or major events advances with fine detail.
+---
 
-Consistency is enforced by several layers working together:
+## What you can do
 
-1. A rules/constraint engine validates world-state invariants (borders are contiguous, populations are non-negative, totals balance).
-2. A validator loop: the LLM generates, code validates, and the LLM retries on failure (with auto-fix for simple violations).
-3. An LLM self-check pass: the second model verifies the first model's numbers.
-4. The models are instructed to reason about second-order effects such as riots, guerrilla movements, rebellions, economic collapse, and refugee flows - not just maps.
+- **Diverge.** Type a prompt → a scenario is created at a divergence date and
+  simulated forward (default to 2100) across several parallel branches.
+- **Explore the map.** Territories are drawn as 2.5D blocks, colored by their
+  owning nation and raised by population. Pan, zoom and tilt; click a territory
+  to inspect it.
+- **Scroll time.** The timeline spans two million years with era markers; click
+  one to jump the view to that period.
+- **Compare branches.** Each branch is diffed against the canonical world; the
+  sidebar lists what changed (borders, nations, techs, populations).
+- **Predict the future.** Live RSS news is fetched, scored for trust, and can
+  be "seeded" into the engine as a near‑future scenario ("what if this headline
+  comes true?").
+- **Stay offline.** No network call is required at runtime. News is the only
+  optional, user‑triggered online feature.
 
-Demographics use all of: per-country aggregates (total population, religion %, ethnicity %), grid-based population density that shifts with borders, a quantified migration model driven by wars and events, and model-predicted extrapolation from historical curves.
+---
 
-Technology uses a hybrid approach: real inventions stay anchored with adoption curves per region, and the models may invent genuinely novel technologies when a diverged world requires them (for example, a Nazi victory might lead to the first crewed Moon landing).
+## Architecture at a glance
 
-### Faithfulness
+```
+                ┌─────────────────────────────────────────┐
+   UI (React)   │  Map (MapLibre+Deck.gl, 2.5D) · Timeline │
+        │       │  Prompt · Progress · Scenarios · Branches │
+        └───────────────┬───────────────────────────────────┘
+                        │  HTTP (localhost:7676)  ·or·  Tauri invoke
+                        ▼
+        ┌───────────────────────────────────────────────────┐
+        │  worldsim-engine (Rust)                             │
+        │   • event-sourced WorldSnapshot                     │
+        │   • adaptive step loop: plan → mustafakemal →       │
+        │     inalcik (stats) → validate → self-check         │
+        │   • causal chain (caused_by) · RAG via ortayli      │
+        │   • deterministic fallback when models absent       │
+        │   • scenario branches + divergence hard-lock        │
+        │   • news → future seeds                             │
+        └───────┬───────────────────────┬─────────────────────┘
+                │                       │
+         SQLite (canonical +    llama.cpp (local inference)
+         scenario events, news)  mustafakemal · inalcik · ortayli
+```
 
-- The canonical real timeline is stored as immutable facts.
-- Scenarios are confined to divergences: a hard lock prevents any edit to history before the divergence point, and any attempted violation is rejected by code.
-- Scenarios are stored as SQLite snapshots layered over the canonical timeline.
+See **ARCHITECTURE.md** for the deep dive (data model, schemas, the simulation
+loop, the validation rules, and how to train the models).
 
-## Minimum device requirements
+---
 
-Budget tier (the stated minimum for the 2-minute scenario target):
+## Quick start
 
-| Tier | RAM | CPU / GPU | Disk | Notes |
-|------|-----|----------|------|-------|
-| Budget (minimum) | 8 GB | Apple M1 or 4-core x86 CPU, no GPU required | 10 GB free | 7B model runs on CPU; expected simulation of a full scenario in roughly 2 minutes |
-| Mid | 16 GB | Apple M1 Pro / RTX 3060 | 15 GB free | 7B model partially GPU-accelerated; scenarios typically well under 2 minutes |
-| High | 32 GB | Apple M2 Pro / RTX 4070+ | 20 GB free | Full GPU offload; fastest simulation |
+### Desktop (Tauri)
+```bash
+cd app
+npm install
+npm run tauri dev        # builds the UI and launches the desktop window
+```
+The first launch needs the seed database and (optionally) the models:
+```bash
+python3 data/build_seed.py                 # builds data/out/worldsim.db
+bash models/download_models.sh             # builds llama.cpp + base GGUFs
+# optional: python3 models/pipeline/...   # fine-tune mustafakemal/inalcik/ortayli
+```
 
-Expected scenario simulation time on budget tier: approximately 2 minutes per full scenario run. Models (bundled GGUF, Q4_K_M) account for roughly 5-6 GB of the disk requirement.
+### Headless / web server
+```bash
+python3 data/build_seed.py
+WSIM_DB=data/out/worldsim.db WSIM_MODELS=models \
+  cargo run -p worldsim-server
+# open http://localhost:7676  (serve app/dist with WSIM_STATIC=app/dist)
+```
 
-### Supported platforms
+### Run the engine tests
+```bash
+cargo test                              # engine unit + integration tests
+python3 data/build_seed.py              # rebuild the canonical database
+```
 
-macOS (Apple Silicon and Intel), Windows, and Linux. v1.0 ships release binaries for all three.
+---
 
-## Data
+## Device requirements
 
-- Historical borders and territories: full timeline from 3200 BCE to the present, assembled from public GIS datasets (Natural Earth and similar) at event-date granularity, covering the GB-scale full written history.
-- The history database is stored in SQLite with SpatiaLite for spatial queries.
-- History is represented three ways at once: structured events (wars, treaties, inventions, censuses), free-text event entries with dates and tags, and a facts graph of entities and their causal relations.
-- Live news is ingested by RSS aggregation with trust scoring (outlet credibility, recency, cross-source dedup), stored, and injected into prediction simulations both as structured state seeds and raw context.
+| Tier | RAM | Disk | Experience |
+|------|-----|------|------------|
+| Minimum | 8 GB | ~10 GB | CPU fallback simulation, one branch |
+| Recommended | 16 GB | ~12 GB | Full 3‑model simulation, 3 branches |
+| Comfortable | 32 GB | ~15 GB | Large branches, live news prediction |
+
+On an 8 GB M1 laptop a single branch with the fallback planner completes in
+roughly two minutes; with the local models it is somewhat slower but fully
+private.
+
+---
 
 ## Project layout
 
 ```
 WorldSimulator/
-├── app/          # Tauri shell + React frontend (MapLibre/Deck.gl WebGL rendering)
-├── engine/       # Rust simulation engine (world state, constraints, validator, causal log)
-├── models/       # Bundled GGUF files and qLoRA training recipes/scripts
-├── data/         # History database builders, GIS source ingestion, seeds
-├── news/         # RSS aggregator, trust scoring, news-to-state conversion
-└── scripts/      # Build, data-import, and release tooling
+├── crates/
+│   ├── engine/            # the simulation engine (Rust)
+│   └── server/            # axum HTTP API on :7676
+├── app/                   # React + Tauri desktop front‑end
+│   ├── src/               # UI components (map, timeline, panels)
+│   └── src-tauri/         # Tauri shell that embeds the engine
+├── models/                # qLoRA training + GGUF export pipeline
+├── data/                  # canonical history seed builder
+├── README.md
+└── ARCHITECTURE.md
 ```
 
-See ARCHITECTURE.txt for the detailed technical design.
-
-## Development
-
-WorldSimulator is open source (MIT). It is built with a Rust backend (Tauri shell) and a React frontend.
-
-The training-data pipeline uses a mix of synthetic scenario data generated with stronger models, community-contributed what-if scenarios, and curated historical counterfactuals from historians.
-
-## Roadmap
-
-- v0.1: repo scaffold, data pipeline for canonical history, map rendering spike.
-- v0.2: single-scenario engine loop (state -> LLM -> validate -> apply), progress box, timeline controls.
-- v0.3: branching, comparison/overlay, scenario saving, causal log.
-- v0.4: live news ingestion and future-prediction mode.
-- v0.5: qLoRA fine-tuned model releases and packaged installers for all three platforms.
-- v1.0: full release with binaries, bundled models, full timeline data.
+---
 
 ## License
 
-MIT. See LICENSE.
+MIT — see `LICENSE`. WorldSimulator is free to use, modify, and redistribute.

@@ -1,0 +1,15 @@
+# Training dependencies for the WorldSimulator qLoRA pipeline.
+# Install:  pip install -r models/pipeline/requirements.txt
+torch>=2.2
+transformers>=4.44
+peft>=0.12
+trl>=0.9
+datasets>=2.20
+accelerate>=0.32
+bitsandbytes>=0.43
+sentencepiece>=0.2
+protobuf>=4.25
+safetensors>=0.4
+sentence-transformers>=2.7
+huggingface_hub>=0.24
+pyyaml>=6.0

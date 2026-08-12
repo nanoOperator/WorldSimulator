@@ -1,0 +1,21 @@
+[package]
+name = "worldsim-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local HTTP server for WorldSimulator. Serves the world map, timelines, scenarios, and news to the web frontend."
+
+[[bin]]
+name = "worldsim-server"
+path = "src/main.rs"
+
+[dependencies]
+worldsim-engine = { path = "../engine" }
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
