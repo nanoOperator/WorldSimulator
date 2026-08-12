@@ -43,6 +43,7 @@ html, body, #root {
   background: var(--panel);
 }
 .topbar h1 { font-size: 16px; margin: 0; letter-spacing: 0.5px; }
+.topbar .logo { height: 28px; width: 28px; border-radius: 6px; object-fit: cover; }
 .topbar .spacer { flex: 1; }
 .topbar .stat { color: var(--muted); font-size: 12px; }
 .topbar .stat b { color: var(--text); }

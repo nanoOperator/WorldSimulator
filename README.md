@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo/WorldSimulator.png" alt="WorldSimulator" width="160" />
+</p>
+
 # 🌍 WorldSimulator
 
 **Hold the entire history of the world — from the first controlled fire lit by

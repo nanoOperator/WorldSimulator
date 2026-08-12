@@ -155,7 +155,8 @@ export default function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <h1>🌍 WorldSimulator</h1>
+        <img src="/WorldSimulator.png" alt="WorldSimulator" className="logo" />
+        <h1>WorldSimulator</h1>
         <span className="stat"><b>{scenarios.length}</b> scenarios</span>
         <span className="stat"><b>{snapshot ? (snapshot.nations || []).length : 0}</b> nations</span>
         <span className="spacer" />
