@@ -2,7 +2,7 @@
   <img src="logo/WorldSimulator.png" alt="WorldSimulator" width="160" />
 </p>
 
-# 🌍 WorldSimulator
+# WorldSimulator
 
 **Hold the entire history of the world — from the first controlled fire lit by
 *Homo erectus* two million years ago, to the present — and ask "what if?"**
@@ -134,15 +134,11 @@ python3 data/build_seed.py              # rebuild the canonical database
 
 ## Device requirements
 
-| Tier | RAM | Disk | Experience |
-|------|-----|------|------------|
-| Minimum | 8 GB | ~10 GB | CPU fallback simulation, one branch |
-| Recommended | 16 GB | ~12 GB | Full 3‑model simulation, 3 branches |
-| Comfortable | 32 GB | ~15 GB | Large branches, live news prediction |
-
-On an 8 GB M1 laptop a single branch with the fallback planner completes in
-roughly two minutes; with the local models it is somewhat slower but fully
-private.
+WorldSimulator runs fully on every supported device. There are no tiers and no
+feature is held back: live news fetching, the three local AI models
+(mustafakemal, inalcik, ortayli), scenario branching, and the 2.5D map all work
+on macOS, Windows, and Linux. Everything stays local and offline; no cloud, no
+API keys, no telemetry.
 
 ---
 
