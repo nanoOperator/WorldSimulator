@@ -434,6 +434,16 @@ ERA_TECHS = {
         ("CRISPR gene editing", "medical", 2013, 0.4),
         ("Electric vehicles", "transport", 2012, 0.6),
         ("Satellite internet", "communication", 2019, 0.5),
+        ("Cloud computing", "computing", 2006, 0.9),
+        ("Social media", "communication", 2006, 0.95),
+        ("5G networks", "communication", 2019, 0.6),
+        ("mRNA vaccines", "medical", 2020, 0.5),
+        ("3D printing", "industry", 2010, 0.5),
+        ("Drones", "military", 2010, 0.7),
+        ("Blockchain", "computing", 2009, 0.4),
+        ("Autonomous vehicles", "transport", 2016, 0.3),
+        ("Quantum computing", "computing", 2019, 0.1),
+        ("Fusion research", "energy", 2020, 0.05),
     ],
 }
 
@@ -1155,7 +1165,7 @@ def build():
         "VALUES (?,?,?,?,?,?,?,?,?)",
         events,
     )
-    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.1.0-expanded')")
+    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.2.0-expanded')")
     conn.commit()
     conn.close()
 

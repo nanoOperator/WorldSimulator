@@ -5,9 +5,10 @@
 //! use of fire by Homo erectus (~2,000,000 BCE) through to the present day.
 //! Scenarios diverge at a user-chosen point; the engine runs an adaptive step
 //! loop driven by three local LLMs:
-//! - `mustafakemal` = Qwen3-8B for causal simulation,
-//! - `inalcik` = Qwen2.5-3B for data/statistics,
-//! - `ortayli` = Qwen3-Embedding for semantic retrieval.
+//!   - `mustafakemal` = Qwen3-8B for causal simulation,
+//!   - `inalcik` = Qwen2.5-3B for data/statistics,
+//!   - `ortayli` = Qwen3-Embedding for semantic retrieval.
+//!
 //! A deterministic rule-based fallback runs when the GGUF weights are absent.
 
 pub mod apply;

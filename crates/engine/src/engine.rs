@@ -127,10 +127,10 @@ impl Engine {
             status: "pending".into(),
             created_at: chrono::Utc::now().to_rfc3339(),
         })?;
-        Ok(self
+        self
             .storage
             .get_scenario(&id)?
-            .ok_or_else(|| EngineError::ScenarioNotFound(id.clone()))?)
+            .ok_or_else(|| EngineError::ScenarioNotFound(id.clone()))
     }
 
     pub fn list_scenarios(&self) -> Result<Vec<Scenario>> {
@@ -265,7 +265,7 @@ pub fn run_branch(
     let mut last_ids: Vec<i64> = Vec::new();
 
     // One-time RAG context (ortayli) over nearby canonical history.
-    let rag_context = historical_context(llm, storage, &scenario, &options)?;
+    let rag_context = historical_context(llm, storage, scenario, options)?;
 
     if let Some(cb) = progress {
         cb(SimProgress {
@@ -341,7 +341,7 @@ pub fn run_branch(
         }
 
         // 3) Validate + auto-fix + retry loop.
-        let events = validate_loop(storage, &scenario, &events, &snapshot)?;
+        let events = validate_loop(storage, scenario, &events, &snapshot)?;
 
         // 4) Apply + causal log.
         let mut seq = storage.last_scenario_seq(&scenario.id, &branch.id)?;
@@ -686,7 +686,7 @@ fn plan_prompt(
     rag_context: &str,
 ) -> String {
     let mut top: Vec<&crate::state::Nation> = snapshot.nations.iter().collect();
-    top.sort_by(|a, b| b.population.cmp(&a.population));
+    top.sort_by_key(|n| std::cmp::Reverse(n.population));
     top.truncate(24);
 
     let mut nat_lines = String::new();

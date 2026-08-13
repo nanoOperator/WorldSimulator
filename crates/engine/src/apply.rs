@@ -11,7 +11,17 @@ pub fn apply(snap: &mut WorldSnapshot, ev: &HistoryEvent) {
         EventPayload::EpochBaseline(b) => {
             snap.nations = b.nations.clone();
             snap.territories = b.territories.clone();
-            snap.techs = b.techs.clone();
+            // Techs accumulate across baselines: a later baseline can redefine
+            // an existing tech (e.g. raising its adoption), but previously
+            // invented technology persists into later eras.
+            let mut techs: std::collections::HashMap<String, TechState> = Default::default();
+            for t in snap.techs.drain(..) {
+                techs.insert(t.tech_id.clone(), t);
+            }
+            for t in &b.techs {
+                techs.insert(t.tech_id.clone(), t.clone());
+            }
+            snap.techs = techs.into_values().collect();
             // Recompute owned-territory lists for every nation.
             let mut owned: std::collections::HashMap<&str, Vec<String>> = Default::default();
             for t in &snap.territories {
@@ -221,11 +231,10 @@ pub fn structural_validate(ev: &HistoryEvent) -> Result<(), EngineError> {
                 return Err(EngineError::invalid("border change needs territory + owner"));
             }
         }
-        EventPayload::Invention(i) => {
-            if i.year < -9999 || i.year > 9999 {
+        EventPayload::Invention(i)
+            if (i.year < -9999 || i.year > 9999) => {
                 return Err(EngineError::invalid("invention year out of range"));
             }
-        }
         _ => {}
     }
     Ok(())

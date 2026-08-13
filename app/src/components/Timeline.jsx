@@ -57,6 +57,24 @@ export default function Timeline({ eras, currentYear, onSeek }) {
 
   useEffect(() => () => clearTimeout(debounceRef.current), []);
 
+  // Wheel / trackpad scrolling over the track travels through history.
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const cur = lastYearRef.current == null ? TRACK_MAX : lastYearRef.current;
+      const step = Math.max(1, Math.abs(e.deltaY) / 100);
+      const dir = e.deltaY > 0 ? 1 : -1;
+      // Constant ~1 year per "notch", scaled across the piecewise zones.
+      const scale = yearForFrac(fracForYear(cur) + 0.02) - yearForFrac(fracForYear(cur) - 0.02);
+      const target = cur + dir * Math.max(step, scale * step * 2);
+      seek(Math.round(target));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
+
   const seek = useCallback(
     (y) => {
       lastYearRef.current = y;
@@ -105,12 +123,23 @@ export default function Timeline({ eras, currentYear, onSeek }) {
   };
 
   const onKeyDown = (e) => {
-    const delta =
-      e.key === "ArrowRight" ? 0.01 : e.key === "ArrowLeft" ? -0.01 : 0;
-    if (delta === 0) return;
-    e.preventDefault();
     const cur = viewYear == null ? TRACK_MAX : viewYear;
-    seek(yearForFrac(fracForYear(cur) + delta));
+    let next = null;
+    if (e.key === "ArrowRight" || e.key === "PageDown") next = yearForFrac(fracForYear(cur) + (e.key === "ArrowRight" ? 0.01 : 0.1));
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") next = yearForFrac(fracForYear(cur) - (e.key === "ArrowLeft" ? 0.01 : 0.1));
+    else if (e.key === "Home") next = TRACK_MIN;
+    else if (e.key === "End") next = TRACK_MAX;
+    if (next == null) return;
+    e.preventDefault();
+    seek(next);
+    flush();
+  };
+
+  const onEraJump = (e) => {
+    const val = e.target.value;
+    if (val === "today") seek(2020);
+    else if (val) seek(Number(val));
+    flush();
   };
 
   const shown = viewYear == null ? TRACK_MAX : viewYear;
@@ -120,7 +149,7 @@ export default function Timeline({ eras, currentYear, onSeek }) {
   const placed = [];
   const markers = eras.map((e) => ({ e, left: fracForYear(e.year) }));
   for (const m of markers) {
-    m.showLabel = placed.every((p) => Math.abs(m.left - p) >= 0.028);
+    m.showLabel = placed.every((p) => Math.abs(m.left - p) >= 0.024);
     if (m.showLabel) placed.push(m.left);
   }
 
@@ -129,7 +158,14 @@ export default function Timeline({ eras, currentYear, onSeek }) {
       <div className="tl-head">
         <b>Timeline</b>
         <span className="tl-current">Current view: {fmtYear(shown)}</span>
-        <span className="tl-hint">drag or click to travel through history</span>
+        <span className="tl-hint">drag, scroll, or use keys</span>
+        <select className="tl-jump" value="" onChange={onEraJump} title="Jump to an era">
+          <option value="" disabled>Jump to era…</option>
+          <option value="today">Today (2020)</option>
+          {eras.map((e) => (
+            <option key={e.label} value={e.year}>≈ {fmtYear(e.year)} — {e.label}</option>
+          ))}
+        </select>
       </div>
       <div
         ref={trackRef}

@@ -69,7 +69,7 @@ pub const ORTAYLI: ModelSpec = ModelSpec {
 
 /// Locate a model's GGUF file relative to the models directory.
 pub fn model_path(models_dir: &Path, spec: &ModelSpec) -> PathBuf {
-    models_dir.join(&spec.filename)
+    models_dir.join(spec.filename)
 }
 
 /// All three bundled models.

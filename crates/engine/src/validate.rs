@@ -67,7 +67,7 @@ pub fn validate(
                 });
             }
             if !world_before.territories.iter().any(|t| t.id == c.territory)
-                && c.geometry_geojson.as_ref().map_or(true, |g| g.is_empty())
+                && c.geometry_geojson.as_ref().is_none_or(|g| g.is_empty())
             {
                 v.push(Violation {
                     event_title: ev.title.clone(),
@@ -107,14 +107,13 @@ pub fn validate(
                 }
             }
         }
-        EventPayload::Invention(i) => {
-            if i.adoption_rate < 0.0 || i.adoption_rate > 1.0 {
+        EventPayload::Invention(i)
+            if (i.adoption_rate < 0.0 || i.adoption_rate > 1.0) => {
                 v.push(Violation {
                     event_title: ev.title.clone(),
                     message: "invention adoption_rate must be in 0.0..=1.0".into(),
                 });
             }
-        }
         _ => {}
     }
     v

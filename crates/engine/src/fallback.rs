@@ -311,12 +311,8 @@ impl<'a> FallbackSim<'a> {
             .map(|t| (t.id.clone(), t.owner.clone()))
             .collect();
         // Take up to a fraction each step.
-        let take = ((candidate.len() as f64) * 0.2).ceil() as usize;
-        let mut taken = 0;
-        for (tid, prev) in candidate {
-            if taken >= take.max(1) {
-                break;
-            }
+        let take = ((candidate.len() as f64) * 0.2).ceil().max(1.0) as usize;
+        for (tid, prev) in candidate.into_iter().take(take) {
             let _ = self.emit(
                 date,
                 format!("Annexation of {tid} by {winner}"),
@@ -336,7 +332,6 @@ impl<'a> FallbackSim<'a> {
                 n.territories.push(tid);
             }
             count += 1;
-            taken += 1;
         }
         count
     }

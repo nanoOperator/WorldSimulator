@@ -23,7 +23,7 @@ html, body, #root {
 
 .app {
   display: grid;
-  grid-template-rows: 48px 1fr 160px;
+  grid-template-rows: 48px 1fr 172px;
   grid-template-columns: 280px 1fr 320px;
   grid-template-areas:
     "topbar topbar topbar"
@@ -48,20 +48,28 @@ html, body, #root {
 .topbar .stat { color: var(--muted); font-size: 12px; }
 .topbar .stat b { color: var(--text); }
 
-.pane { background: var(--panel); overflow: auto; }
+.pane { background: var(--panel); overflow: auto; min-height: 0; }
 .left { grid-area: left; }
 .right { grid-area: right; }
-.map { grid-area: map; position: relative; background: #0a0e14; }
-.timeline { grid-area: timeline; background: var(--panel); }
+.map { grid-area: map; position: relative; background: #0a0e14; min-height: 0; }
+.timeline { grid-area: timeline; background: var(--panel); min-height: 0; overflow: hidden; }
 
-.tl-head { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px 4px; }
-.tl-head .tl-current { color: var(--text); font-size: 12px; }
+.tl-head { display: flex; align-items: center; gap: 12px; padding: 8px 16px 2px; }
+.tl-head .tl-current { color: var(--text); font-size: 12px; white-space: nowrap; }
 .tl-head .tl-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+.tl-jump {
+  width: auto;
+  flex: none;
+  font-size: 12px;
+  padding: 3px 8px;
+  max-width: 140px;
+}
 
 .tl-track {
   position: relative;
-  height: 84px;
-  margin: 4px 16px 8px;
+  height: 128px;
+  margin: 2px 16px 8px;
   cursor: ew-resize;
   touch-action: none;
   outline: none;
@@ -73,7 +81,7 @@ html, body, #root {
   position: absolute;
   left: 0;
   right: 0;
-  top: 42px;
+  top: 66px;
   height: 3px;
   background: var(--border);
   border-radius: 2px;
@@ -81,17 +89,17 @@ html, body, #root {
 
 .tl-marker {
   position: absolute;
-  top: 34px;
+  top: 58px;
   transform: translateX(-50%);
   text-align: center;
   user-select: none;
 }
-.tl-tick { width: 1px; height: 12px; background: var(--accent); margin: 0 auto; opacity: 0.8; }
+.tl-tick { width: 1px; height: 14px; background: var(--accent); margin: 0 auto; opacity: 0.8; }
 .tl-label { font-size: 10px; color: var(--muted); margin-top: 3px; white-space: nowrap; }
 
 .tl-handle {
   position: absolute;
-  top: 26px;
+  top: 50px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -159,6 +167,8 @@ textarea { resize: vertical; min-height: 64px; }
 .progress-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .progress-head h2 { margin: 0; }
 .progress-pct { font-size: 12px; font-weight: 700; color: var(--accent); }
+.progress-tools { display: flex; align-items: center; gap: 8px; }
+button.mini { padding: 2px 8px; font-size: 11px; }
 .progress .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .progress .bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
 .progress .msg { color: var(--text); font-size: 12px; margin-top: 6px; }
@@ -183,9 +193,32 @@ textarea { resize: vertical; min-height: 64px; }
   overflow: auto; font-size: 12px; }
 .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
 
-.nation-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-.nation-row .dot { width: 10px; height: 10px; border-radius: 50%; }
-.nation-row .pop { margin-left: auto; color: var(--muted); font-size: 12px; }
+.nation-controls { display: flex; gap: 8px; margin-bottom: 10px; }
+.nation-controls select { width: 45%; flex: none; font-size: 12px; padding: 6px 8px; }
+.nation-controls input { font-size: 12px; padding: 6px 8px; }
+
+.nation-detail {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.nation-detail-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.nation-detail-head .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.nation-detail-head .meta { margin-left: auto; }
+.nation-detail-grid { display: flex; gap: 16px; margin-top: 10px; }
+.nation-detail-grid > div { flex: 1; }
+.index-bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.index-bar > div { height: 100%; background: var(--accent); }
+
+.nation-list { max-height: 140px; overflow: auto; }
+.nation-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.nation-row:hover { background: var(--panel-2); }
+.nation-row.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--accent); }
+.nation-row .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.nation-row .nation-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nation-row .pop { margin-left: auto; color: var(--muted); font-size: 12px; flex: none; }
 
 .feed { font-size: 12px; color: var(--muted); }
 .feed .item { padding: 4px 0; border-bottom: 1px dashed var(--border); }
@@ -203,7 +236,23 @@ textarea { resize: vertical; min-height: 64px; }
 .logs-line { display: flex; gap: 10px; padding: 1px 0; border-bottom: 1px dashed var(--border); }
 .logs-time { color: var(--muted); flex: 0 0 64px; }
 .logs-msg { color: var(--text); white-space: pre-wrap; word-break: break-word; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; }
+
+.tech-modal { width: min(640px, 94vw); display: flex; flex-direction: column; }
+.tech-modal .logs-actions { flex-wrap: wrap; }
+.tech-search { width: 190px; flex: none; font-size: 12px; padding: 6px 8px; }
+.tech-modal select { width: auto; font-size: 12px; padding: 6px 8px; }
+.tech-summary { margin-bottom: 8px; }
+.tech-list { overflow: auto; max-height: 60vh; }
+.tech-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px dashed var(--border); }
+.tech-cat { width: 24px; text-align: center; font-size: 16px; flex: none; }
+.tech-main { flex: 1; min-width: 0; }
+.tech-name { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.tech-name b { font-size: 13px; }
+.tech-name .meta { font-size: 11px; }
+.tech-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.tech-bar-fill { height: 100%; background: var(--accent-2); }
+.tech-pct { width: 42px; text-align: right; font-size: 12px; color: var(--muted); flex: none; }
 .model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0;
   border-bottom: 1px dashed var(--border); }
 .model-row input { width: 100%; margin: 4px 0; }
@@ -224,7 +273,10 @@ textarea { resize: vertical; min-height: 64px; }
 .feed::-webkit-scrollbar,
 .legend::-webkit-scrollbar,
 .modal::-webkit-scrollbar,
-.log::-webkit-scrollbar {
+.log::-webkit-scrollbar,
+.logs-feed::-webkit-scrollbar,
+.tech-list::-webkit-scrollbar,
+.nation-list::-webkit-scrollbar {
   width: 8px;
 }
 .pane::-webkit-scrollbar-thumb,
@@ -232,7 +284,10 @@ textarea { resize: vertical; min-height: 64px; }
 .feed::-webkit-scrollbar-thumb,
 .legend::-webkit-scrollbar-thumb,
 .modal::-webkit-scrollbar-thumb,
-.log::-webkit-scrollbar-thumb {
+.log::-webkit-scrollbar-thumb,
+.logs-feed::-webkit-scrollbar-thumb,
+.tech-list::-webkit-scrollbar-thumb,
+.nation-list::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 4px;
 }
@@ -241,7 +296,10 @@ textarea { resize: vertical; min-height: 64px; }
 .feed::-webkit-scrollbar-thumb:hover,
 .legend::-webkit-scrollbar-thumb:hover,
 .modal::-webkit-scrollbar-thumb:hover,
-.log::-webkit-scrollbar-thumb:hover {
+.log::-webkit-scrollbar-thumb:hover,
+.logs-feed::-webkit-scrollbar-thumb:hover,
+.tech-list::-webkit-scrollbar-thumb:hover,
+.nation-list::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
 }
 .pane::-webkit-scrollbar-track,
@@ -249,6 +307,9 @@ textarea { resize: vertical; min-height: 64px; }
 .feed::-webkit-scrollbar-track,
 .legend::-webkit-scrollbar-track,
 .modal::-webkit-scrollbar-track,
-.log::-webkit-scrollbar-track {
+.log::-webkit-scrollbar-track,
+.logs-feed::-webkit-scrollbar-track,
+.tech-list::-webkit-scrollbar-track,
+.nation-list::-webkit-scrollbar-track {
   background: transparent;
 }

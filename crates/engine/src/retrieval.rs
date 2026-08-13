@@ -135,6 +135,12 @@ pub struct EmbeddingIndex {
     embs: Vec<Embedding>,
 }
 
+impl Default for EmbeddingIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EmbeddingIndex {
     pub fn new() -> Self {
         EmbeddingIndex { docs: Vec::new(), embs: Vec::new() }

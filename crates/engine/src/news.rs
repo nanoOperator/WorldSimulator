@@ -7,6 +7,9 @@ use quick_xml::de::from_str;
 use serde::Deserialize;
 use std::time::Duration;
 
+/// A raw (unparsed) item pulled from an RSS channel.
+type RawFeedItem = (String, Option<String>, Option<String>, Option<String>);
+
 /// RSS 2.0 channel (also parses Atom feeds loosely via channel fallbacks).
 #[derive(Debug, Deserialize, Default)]
 struct Rss {
@@ -83,7 +86,7 @@ pub fn fetch_source(storage: &Storage, source_id: &str, url: &str, base_trust: f
     let today = SimDate::from_ce(crate::PRESENT_YEAR, 1, 1).days_from_ce();
     let mut stored = 0usize;
 
-    let mut items: Vec<(String, Option<String>, Option<String>, Option<String>)> = Vec::new();
+    let mut items: Vec<RawFeedItem> = Vec::new();
     if let Some(ch) = &parsed.channel {
         for it in &ch.item {
             items.push((
@@ -207,9 +210,9 @@ pub fn seed_from_news(
 ) -> Result<usize> {
     use crate::events::{EventPayload, HistoryEvent, NewsSeed};
     let items = storage.top_news_items(limit)?;
-    let mut seq = storage.last_scenario_seq(scenario_id, branch_id)?;
+    let seq = storage.last_scenario_seq(scenario_id, branch_id)?;
     let mut stored = 0usize;
-    for item in items {
+    for (offset, item) in items.into_iter().enumerate() {
         let ev = HistoryEvent {
             id: 0,
             date: SimDate::from_days(item.published_day).max(seed_date),
@@ -226,9 +229,8 @@ pub fn seed_from_news(
             }),
             source_model: "news".into(),
             causal_parents: vec![],
-            seq,
+            seq: seq + offset as i64,
         };
-        seq += 1;
         storage.add_scenario_event(&ev, branch_id)?;
         storage.mark_news_processed(&item.id)?;
         stored += 1;

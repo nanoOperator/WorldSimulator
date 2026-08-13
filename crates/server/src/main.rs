@@ -246,10 +246,12 @@ async fn simulate(
         .ok_or_else(|| (StatusCode::NOT_FOUND, "scenario not found".into()))?;
     drop(engine);
 
-    let mut options = worldsim_engine::SimulationOptions::default();
-    options.target_date = target;
-    options.branch_count = req.branch_count.max(1);
-    options.force_fallback = req.force_fallback;
+    let options = worldsim_engine::SimulationOptions {
+        target_date: target,
+        branch_count: req.branch_count.max(1),
+        force_fallback: req.force_fallback,
+        ..Default::default()
+    };
 
     let scenario_id = scenario.id.clone();
     let scenario_id_for_json = scenario_id.clone();

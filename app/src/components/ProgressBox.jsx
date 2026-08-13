@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export default function ProgressBox({ progress }) {
+export default function ProgressBox({ progress, onOpenLogs }) {
   const logRef = useRef(null);
   const pct = progress ? Math.round(progress.percent * 100) : 0;
   const last = progress?.log?.length || 0;
@@ -21,7 +21,14 @@ export default function ProgressBox({ progress }) {
             ? "finished"
             : "(idle)"}
         </h2>
-        {progress && <span className="progress-pct">{pct}%</span>}
+        <span className="progress-tools">
+          {last > 0 && (
+            <button className="secondary mini" onClick={onOpenLogs} title="Open live log">
+              Log
+            </button>
+          )}
+          {progress && <span className="progress-pct">{pct}%</span>}
+        </span>
       </div>
       <div className="bar"><div style={{ width: `${pct}%` }} /></div>
       <div className="msg">

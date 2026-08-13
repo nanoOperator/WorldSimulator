@@ -4,12 +4,41 @@ import { GeoJsonLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-// Blank offline style (no external tiles needed).
-const BLANK_STYLE = {
+// World terrain beneath the political polygons: free Amazon Terrain Tiles
+// (terrarium encoding) rendered as hillshade + real 3D terrain. Falls back
+// to a flat ocean when offline or tiles are unavailable.
+const MAP_STYLE = {
   version: 8,
-  sources: {},
+  sources: {
+    dem: {
+      type: "raster-dem",
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encoding: "terrarium",
+      tileSize: 256,
+      maxzoom: 15,
+      attribution: "Terrain: © Amazon Web Services",
+    },
+    graticule: { type: "geojson", data: graticuleGeoJSON() },
+  },
   layers: [
-    { id: "bg", type: "background", paint: { "background-color": "#0a0e14" } },
+    { id: "ocean", type: "background", paint: { "background-color": "#0a1420" } },
+    {
+      id: "hillshade",
+      type: "hillshade",
+      source: "dem",
+      paint: {
+        "hillshade-exaggeration": 0.5,
+        "hillshade-shadow-color": "#04070d",
+        "hillshade-highlight-color": "#3d4d68",
+        "hillshade-accent-color": "#182741",
+      },
+    },
+    {
+      id: "graticule",
+      type: "line",
+      source: "graticule",
+      paint: { "line-color": "#243248", "line-width": 0.5, "line-opacity": 0.3 },
+    },
   ],
 };
 
@@ -52,7 +81,12 @@ export default function WorldMap({ geojson, selected, onSelect }) {
       layers={layer ? [layer] : []}
       style={{ position: "absolute", inset: 0 }}
     >
-      <Map ref={mapRef} mapStyle={BLANK_STYLE} attributionControl={false} />
+      <Map
+        ref={mapRef}
+        mapStyle={MAP_STYLE}
+        attributionControl={false}
+        terrain={{ source: "dem", exaggeration: 0.25 }}
+      />
     </DeckGL>
   );
 }
@@ -61,4 +95,29 @@ function hexToRgb(hex) {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!m) return [136, 136, 136];
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), 220];
+}
+
+function graticuleGeoJSON() {
+  const features = [];
+  for (let lon = -180; lon <= 180; lon += 30) {
+    features.push({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "LineString",
+        coordinates: Array.from({ length: 37 }, (_, i) => [lon, -90 + i * 5]),
+      },
+    });
+  }
+  for (let lat = -90; lat <= 90; lat += 30) {
+    features.push({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "LineString",
+        coordinates: Array.from({ length: 145 }, (_, i) => [-180 + i * 2.5, lat]),
+      },
+    });
+  }
+  return { type: "FeatureCollection", features };
 }

@@ -10,6 +10,7 @@ import BranchTree from "./components/BranchTree.jsx";
 import StatsPanel from "./components/StatsPanel.jsx";
 import SetupPanel from "./components/SetupPanel.jsx";
 import LogsPanel from "./components/LogsPanel.jsx";
+import TechBrowser from "./components/TechBrowser.jsx";
 
 const PALEO_MARKERS = [
   { label: "Fire", year: -1900000, short: "Fire" },
@@ -66,6 +67,7 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const [logAutoScroll, setLogAutoScroll] = useState(true);
+  const [showTech, setShowTech] = useState(false);
   const lastLogRef = useRef("");
 
   // Fold the backend's capped log buffer into an unbounded session log. The
@@ -279,6 +281,9 @@ export default function App() {
         <button className="secondary logs-toggle" onClick={() => { navSound("click"); setShowLogs(true); }}>
           Logs{logs.length ? ` (${logs.length})` : ""}
         </button>
+        <button className="secondary" onClick={() => { navSound("click"); setShowTech(true); }} title="Browse all technologies">
+          Techs
+        </button>
         <button className="secondary" onClick={refreshNews}>Refresh news</button>
       </div>
 
@@ -314,7 +319,7 @@ export default function App() {
 
       <div className="pane right">
         <StatsPanel snapshot={snapshot} comparison={comparison} />
-        <ProgressBox progress={progress} />
+        <ProgressBox progress={progress} onOpenLogs={() => setShowLogs(true)} />
         <div className="card">
           <h2>News signals</h2>
           <div className="feed">
@@ -355,6 +360,7 @@ export default function App() {
           onClose={() => setShowLogs(false)}
         />
       )}
+      {showTech && <TechBrowser onClose={() => setShowTech(false)} />}
     </div>
   );
 }
