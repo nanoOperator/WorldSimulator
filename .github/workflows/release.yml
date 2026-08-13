@@ -40,7 +40,7 @@ jobs:
             gh release create "$tag" --draft --title "WorldSimulator $tag" \
               --notes "WorldSimulator $tag — local, offline alternate-history simulator."
           fi
-          id=$(gh release view "$tag" --json id -q .id)
+          id=$(gh api "/repos/nanoOperator/WorldSimulator/releases/tags/$tag" --jq .id)
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
