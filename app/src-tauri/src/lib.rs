@@ -23,7 +23,7 @@ struct AppState {
     sim_status: Arc<Mutex<SimStatus>>,
 }
 
-type App = State<'static, AppState>;
+type App<'a> = State<'a, AppState>;
 
 fn resolve() -> (PathBuf, PathBuf, PathBuf) {
     let home = std::env::var("HOME").or_else(|_| std::env::var("APPDATA")).unwrap_or_else(|_| ".".into());
@@ -37,89 +37,89 @@ fn resolve() -> (PathBuf, PathBuf, PathBuf) {
 }
 
 #[tauri::command]
-fn status(state: App) -> serde_json::Value {
+fn status(state: App<'_>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let models = e.model_status();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "history_start": SimDate::default(),
         "present_year": worldsim_engine::PRESENT_YEAR,
         "eras": worldsim_engine::ERAS,
         "models": models,
         "seed_version": e.storage().get_meta("seed_version").ok().flatten().unwrap_or_default(),
         "canonical_events": e.storage().canonical_event_count().unwrap_or(0),
-    })
+    }))
 }
 
 #[tauri::command]
-fn list_scenarios(state: App) -> Vec<worldsim_engine::storage::Scenario> {
-    state.engine.lock().unwrap().list_scenarios().unwrap_or_default()
+fn list_scenarios(state: App<'_>) -> Result<Vec<worldsim_engine::storage::Scenario>, String> {
+    Ok(state.engine.lock().unwrap().list_scenarios().unwrap_or_default())
 }
 
 #[tauri::command]
-fn get_scenario(state: App, id: String) -> Option<worldsim_engine::storage::Scenario> {
-    state.engine.lock().unwrap().get_scenario(&id).unwrap_or(None)
+fn get_scenario(state: App<'_>, id: String) -> Result<Option<worldsim_engine::storage::Scenario>, String> {
+    Ok(state.engine.lock().unwrap().get_scenario(&id).unwrap_or(None))
 }
 
 #[tauri::command]
-fn create_scenario(state: App, name: String, prompt: String, divergence: String) -> Result<worldsim_engine::storage::Scenario, String> {
+fn create_scenario(state: App<'_>, name: String, prompt: String, divergence: String) -> Result<worldsim_engine::storage::Scenario, String> {
     let d = date_from_iso(&divergence).ok_or("bad divergence date")?;
     state.engine.lock().unwrap().create_scenario(&name, &prompt, d).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn update_scenario(state: App, id: String, name: Option<String>, prompt: Option<String>) -> Result<(), String> {
+fn update_scenario(state: App<'_>, id: String, name: Option<String>, prompt: Option<String>) -> Result<(), String> {
     let e = state.engine.lock().unwrap();
     let sc = e.get_scenario(&id).map_err(|e| e.to_string())?.ok_or("not found")?;
     e.storage().update_scenario(&id, &name.unwrap_or(sc.name), &prompt.unwrap_or(sc.prompt)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn delete_scenario(state: App, id: String) -> Result<(), String> {
+fn delete_scenario(state: App<'_>, id: String) -> Result<(), String> {
     state.engine.lock().unwrap().storage().delete_scenario(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn branches(state: App, id: String) -> Vec<worldsim_engine::storage::Branch> {
-    state.engine.lock().unwrap().list_branches(&id).unwrap_or_default()
+fn branches(state: App<'_>, id: String) -> Result<Vec<worldsim_engine::storage::Branch>, String> {
+    Ok(state.engine.lock().unwrap().list_branches(&id).unwrap_or_default())
 }
 
 #[tauri::command]
-fn world(state: App, scenario: Option<String>, branch: Option<String>) -> serde_json::Value {
+fn world(state: App<'_>, scenario: Option<String>, branch: Option<String>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let date = SimDate::from_ce(worldsim_engine::PRESENT_YEAR, 1, 1);
     let snap = e.storage().build_snapshot(date, scenario.as_deref(), branch.as_deref()).unwrap_or_default();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "date": date,
         "snapshot": snap,
         "geojson": snap.to_geojson(),
         "total_population": snap.total_population(),
-    })
+    }))
 }
 
 #[tauri::command]
-fn timeline(state: App, scenario: Option<String>, branch: Option<String>) -> Vec<worldsim_engine::events::HistoryEvent> {
+fn timeline(state: App<'_>, scenario: Option<String>, branch: Option<String>) -> Result<Vec<worldsim_engine::events::HistoryEvent>, String> {
     let e = state.engine.lock().unwrap();
     let to = SimDate { year: 9999, month: 12, day: 28 };
-    let mut canon = e.storage().canonical_events_up_to(to).unwrap_or_default();
-    let mut scn = if let (Some(s), Some(b)) = (scenario, branch) {
+    let canon = e.storage().canonical_events_up_to(to).unwrap_or_default();
+    let scn = if let (Some(s), Some(b)) = (scenario, branch) {
         e.storage().scenario_events_up_to(&s, &b, to).unwrap_or_default()
     } else { vec![] };
-    worldsim_engine::apply::merge_sorted(canon, scn)
+    Ok(worldsim_engine::apply::merge_sorted(canon, scn))
 }
 
 #[tauri::command]
-fn compare(state: App, scenario: String, branch: Option<String>) -> serde_json::Value {
+fn compare(state: App<'_>, scenario: String, branch: Option<String>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let date = SimDate::from_ce(worldsim_engine::PRESENT_YEAR, 1, 1);
     let canon = e.storage().build_snapshot(date, None, None).unwrap_or_default();
     let scn = e.storage().build_snapshot(date, Some(&scenario), branch.as_deref()).unwrap_or_default();
     let comp = worldsim_engine::scenario::compare_snapshots(&canon, &scn);
     let overlay = worldsim_engine::scenario::overlay_geojson(&canon, &scn);
-    serde_json::json!({ "comparison": comp, "overlay": overlay })
+    Ok(serde_json::json!({ "comparison": comp, "overlay": overlay }))
 }
 
 #[tauri::command]
-fn simulate(state: App, scenario_id: String, target_date: Option<String>, branch_count: Option<usize>) -> serde_json::Value {
+fn simulate(state: App<'_>, scenario_id: String, target_date: Option<String>, branch_count: Option<usize>) -> Result<serde_json::Value, String> {
     let target = target_date.as_deref().and_then(date_from_iso).unwrap_or(SimDate { year: 2100, month: 1, day: 1 });
     let mut opts = worldsim_engine::SimulationOptions::default();
     opts.target_date = target;
@@ -150,16 +150,16 @@ fn simulate(state: App, scenario_id: String, target_date: Option<String>, branch
             Err(e) => { s.running = false; s.stage = "error".into(); s.message = format!("Failed: {e}"); let m = s.message.clone(); s.log.push(m); }
         }
     });
-    serde_json::json!({ "started": true, "scenario_id": scenario_id })
+    Ok(serde_json::json!({ "started": true, "scenario_id": scenario_id }))
 }
 
 #[tauri::command]
-fn simulate_status(state: App) -> SimStatus {
-    state.sim_status.lock().unwrap().clone()
+fn simulate_status(state: App<'_>) -> Result<SimStatus, String> {
+    Ok(state.sim_status.lock().unwrap().clone())
 }
 
 #[tauri::command]
-fn refresh_news(state: App) -> serde_json::Value {
+fn refresh_news(state: App<'_>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let st = e.storage();
     if st.list_news_sources().unwrap_or_default().is_empty() {
@@ -168,16 +168,16 @@ fn refresh_news(state: App) -> serde_json::Value {
         }
     }
     let added = worldsim_engine::news::fetch_all(st).unwrap_or(0);
-    serde_json::json!({ "added": added })
+    Ok(serde_json::json!({ "added": added }))
 }
 
 #[tauri::command]
-fn list_news(state: App, limit: Option<usize>) -> Vec<worldsim_engine::storage::NewsItemRow> {
-    state.engine.lock().unwrap().storage().top_news_items(limit.unwrap_or(50)).unwrap_or_default()
+fn list_news(state: App<'_>, limit: Option<usize>) -> Result<Vec<worldsim_engine::storage::NewsItemRow>, String> {
+    Ok(state.engine.lock().unwrap().storage().top_news_items(limit.unwrap_or(50)).unwrap_or_default())
 }
 
 #[tauri::command]
-fn seed_news(state: App, scenario_id: String, branch_id: Option<String>, item_id: Option<String>, limit: Option<usize>) -> serde_json::Value {
+fn seed_news(state: App<'_>, scenario_id: String, branch_id: Option<String>, item_id: Option<String>, limit: Option<usize>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let st = e.storage();
     let br = branch_id.unwrap_or_else(|| "default".into());
@@ -189,7 +189,7 @@ fn seed_news(state: App, scenario_id: String, branch_id: Option<String>, item_id
         limit.unwrap_or(20),
     )
     .unwrap_or(0);
-    serde_json::json!({ "seeded": n, "item_id": item_id })
+    Ok(serde_json::json!({ "seeded": n, "item_id": item_id }))
 }
 
 pub fn run() {
