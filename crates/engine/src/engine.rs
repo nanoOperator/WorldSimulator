@@ -27,6 +27,8 @@ pub struct SimProgress {
     pub events_created: usize,
     /// mustafakemal | inalcik | fallback
     pub source: String,
+    /// lifecycle phase: start | plan | stats | validate | apply | step | done
+    pub phase: String,
     pub note: String,
 }
 
@@ -249,6 +251,7 @@ pub fn run_branch(
                 step: 0,
                 events_created: n,
                 source: "fallback".into(),
+                phase: "done".into(),
                 note: "Deterministic fallback simulation complete".into(),
             });
         }
@@ -264,9 +267,35 @@ pub fn run_branch(
     // One-time RAG context (ortayli) over nearby canonical history.
     let rag_context = historical_context(llm, storage, &scenario, &options)?;
 
+    if let Some(cb) = progress {
+        cb(SimProgress {
+            scenario_id: scenario.id.clone(),
+            branch_id: branch.id.clone(),
+            date,
+            step: 0,
+            events_created: 0,
+            source: "engine".into(),
+            phase: "start".into(),
+            note: format!("Branch {} starting from {}", branch.id, scenario.divergence.display()),
+        });
+    }
+
     while date < options.target_date && step < options.max_steps {
         let step_years = adaptive_step(step);
         let next = date.add_years(step_years).min(options.target_date);
+
+        if let Some(cb) = progress {
+            cb(SimProgress {
+                scenario_id: scenario.id.clone(),
+                branch_id: branch.id.clone(),
+                date,
+                step,
+                events_created: created,
+                source: "engine".into(),
+                phase: "plan".into(),
+                note: format!("Step {step} branch {}: planning {date} → {next}…", branch.id),
+            });
+        }
 
         let snapshot = storage.build_snapshot(date, Some(&scenario.id), Some(&branch.id))?;
 
@@ -282,8 +311,34 @@ pub fn run_branch(
             &rag_context,
         )?;
 
+        if let Some(cb) = progress {
+            cb(SimProgress {
+                scenario_id: scenario.id.clone(),
+                branch_id: branch.id.clone(),
+                date,
+                step,
+                events_created: created,
+                source: source.clone(),
+                phase: "stats".into(),
+                note: format!("Step {step} ({source}): {} events, filling statistics…", events.len()),
+            });
+        }
+
         // 2) Inalcik fills in statistics.
         let events = fill_statistics(llm, events, options, branch.seed as u64)?;
+
+        if let Some(cb) = progress {
+            cb(SimProgress {
+                scenario_id: scenario.id.clone(),
+                branch_id: branch.id.clone(),
+                date,
+                step,
+                events_created: created,
+                source: source.clone(),
+                phase: "validate".into(),
+                note: format!("Step {step}: validating {} events…", events.len()),
+            });
+        }
 
         // 3) Validate + auto-fix + retry loop.
         let events = validate_loop(storage, &scenario, &events, &snapshot)?;
@@ -319,7 +374,8 @@ pub fn run_branch(
                 step,
                 events_created: created,
                 source,
-                note: format!("Simulated {date} -> {next}"),
+                phase: "step".into(),
+                note: format!("Step {step} branch {} complete: {date} → {next}", branch.id),
             });
         }
 
@@ -336,6 +392,7 @@ pub fn run_branch(
             step,
             events_created: created,
             source: "engine".into(),
+            phase: "done".into(),
             note: "Simulation complete".into(),
         });
     }

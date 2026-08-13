@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use worldsim_engine::{date_from_iso, Engine, SimDate, SimProgress};
 
@@ -76,7 +76,14 @@ fn set_status(s: &Arc<Mutex<SetupStatus>>, stage: &str, msg: &str, pct: f64) {
     st.percent = pct;
 }
 
-async fn stream_download(app: &AppHandle, url: &str, dest: &PathBuf, event: &str) -> Result<(), String> {
+async fn stream_download(
+    app: &AppHandle,
+    url: &str,
+    dest: &PathBuf,
+    event: &str,
+    status: Option<&Arc<Mutex<SetupStatus>>>,
+    span: (f64, f64),
+) -> Result<(), String> {
     use futures_util::StreamExt;
     let client = reqwest::Client::new();
     let resp = client.get(url).send().await.map_err(|e| format!("request failed: {e}"))?;
@@ -96,6 +103,18 @@ async fn stream_download(app: &AppHandle, url: &str, dest: &PathBuf, event: &str
             event,
             serde_json::json!({ "stage": "download", "percent": percent, "downloaded": downloaded, "total": total }),
         );
+        if let Some(st) = status {
+            let mut s = st.lock().unwrap();
+            if percent >= 0.0 {
+                s.percent = span.0 + span.1 * percent;
+                s.message = format!(
+                    "Downloading… {:.1} / {:.1} MB ({:.0}%)",
+                    downloaded as f64 / (1024.0 * 1024.0),
+                    total as f64 / (1024.0 * 1024.0),
+                    percent * 100.0,
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -140,7 +159,7 @@ async fn setup_engine(app: AppHandle, state: App<'_>, force: Option<bool>) -> Re
     let _ = app.emit("engine-progress", serde_json::json!({ "stage": "resolving", "percent": 0.0, "message": url }));
     let ext = if is_zip { "zip" } else { "tar.gz" };
     let tmp = std::env::temp_dir().join(format!("worldsim-llama-{LLAMA_TAG}-{suffix}.{ext}"));
-    stream_download(&app, &url, &tmp, "engine-progress").await?;
+    stream_download(&app, &url, &tmp, "engine-progress", None, (0.0, 1.0)).await?;
     let _ = app.emit("engine-progress", serde_json::json!({ "stage": "extracting", "percent": 1.0 }));
     extract_archive(&tmp, is_zip, &bin_dir).map_err(|e| format!("extract failed: {e}"))?;
     for name in ["llama-cli", "llama-server"] {
@@ -177,7 +196,7 @@ async fn download_model(app: AppHandle, state: App<'_>, url: String, filename: O
     if dest.is_file() && !force {
         return Ok(serde_json::json!({ "ok": true, "filename": fname, "skipped": true }));
     }
-    stream_download(&app, &url, &dest, "model-progress").await?;
+    stream_download(&app, &url, &dest, "model-progress", None, (0.0, 1.0)).await?;
     let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "ok": true, "filename": fname, "size": size }))
 }
@@ -219,6 +238,8 @@ struct SimStatus {
     stage: String,
     message: String,
     log: Vec<String>,
+    done: u64,
+    total: u64,
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -278,7 +299,7 @@ fn get_scenario(state: App<'_>, id: String) -> Result<Option<worldsim_engine::st
     Ok(state.engine.lock().unwrap().get_scenario(&id).unwrap_or(None))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 fn create_scenario(state: App<'_>, name: String, prompt: String, divergence: String) -> Result<worldsim_engine::storage::Scenario, String> {
     let d = date_from_iso(&divergence).ok_or("bad divergence date")?;
     state.engine.lock().unwrap().create_scenario(&name, &prompt, d).map_err(|e| e.to_string())
@@ -302,9 +323,13 @@ fn branches(state: App<'_>, id: String) -> Result<Vec<worldsim_engine::storage::
 }
 
 #[tauri::command]
-fn world(state: App<'_>, scenario: Option<String>, branch: Option<String>) -> Result<serde_json::Value, String> {
+fn world(state: App<'_>, scenario: Option<String>, branch: Option<String>, date: Option<String>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
-    let date = SimDate::from_ce(worldsim_engine::PRESENT_YEAR, 1, 1);
+    let date = date
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(date_from_iso)
+        .unwrap_or_else(|| SimDate::from_ce(worldsim_engine::PRESENT_YEAR, 1, 1));
     let snap = e.storage().build_snapshot(date, scenario.as_deref(), branch.as_deref()).unwrap_or_default();
     Ok(serde_json::json!({
         "date": date,
@@ -336,14 +361,16 @@ fn compare(state: App<'_>, scenario: String, branch: Option<String>) -> Result<s
     Ok(serde_json::json!({ "comparison": comp, "overlay": overlay }))
 }
 
-#[tauri::command]
-fn simulate(state: App<'_>, scenario_id: String, target_date: Option<String>, branch_count: Option<usize>) -> Result<serde_json::Value, String> {
+#[tauri::command(rename_all = "snake_case")]
+fn simulate(app: AppHandle, state: App<'_>, scenario_id: String, target_date: Option<String>, branch_count: Option<usize>, force_fallback: Option<bool>) -> Result<serde_json::Value, String> {
     let target = target_date.as_deref().and_then(date_from_iso).unwrap_or(SimDate { year: 2100, month: 1, day: 1 });
     let mut opts = worldsim_engine::SimulationOptions::default();
     opts.target_date = target;
     opts.branch_count = branch_count.unwrap_or(1).max(1);
+    opts.force_fallback = force_fallback.unwrap_or(false);
+    let total = opts.max_steps as u64 * opts.branch_count as u64;
     let status = state.sim_status.clone();
-    *status.lock().unwrap() = SimStatus { running: true, percent: 0.0, stage: "start".into(), message: format!("Starting {scenario_id}"), log: vec![] };
+    *status.lock().unwrap() = SimStatus { running: true, percent: 0.0, stage: "start".into(), message: format!("Starting {scenario_id}"), log: vec![], done: 0, total };
     let db = state.db_path.clone();
     let md = state.models_dir.clone();
     let bin = state.bin_dir.clone();
@@ -351,22 +378,32 @@ fn simulate(state: App<'_>, scenario_id: String, target_date: Option<String>, br
     std::thread::spawn(move || {
         let cb: std::sync::Arc<dyn Fn(SimProgress) + Send + Sync> = std::sync::Arc::new({
             let st = status.clone();
+            let app = app.clone();
             move |p: SimProgress| {
                 let mut s = st.lock().unwrap();
-                s.percent = (p.step as f64).max(s.percent);
-                s.stage = p.source.clone();
-                s.message = format!("{} | branch {} @ {} ({} events)", p.note, p.branch_id, p.date, p.events_created);
+                s.stage = p.phase.clone();
+                let is_step = p.phase == "step" || p.phase == "done";
+                if is_step {
+                    s.done += 1;
+                }
+                s.percent = if s.total > 0 { (s.done as f64 / s.total as f64).min(1.0) } else { 0.0 };
+                s.message = match p.phase.as_str() {
+                    "plan" | "stats" | "validate" => format!("{} ({})", p.note, p.branch_id),
+                    _ => format!("{} — {} events ({}): {}", p.branch_id, p.events_created, p.source, p.note),
+                };
                 let m = s.message.clone();
                 s.log.push(m);
                 if s.log.len() > 200 { s.log.remove(0); }
+                let _ = app.emit("sim-progress", &*s);
             }
         });
         let res = Engine::open(&db, &md, &bin).and_then(|eng| eng.run_scenario(&sid, opts, Some(cb)));
         let mut s = status.lock().unwrap();
         match res {
-            Ok(_branches) => { s.running = false; s.percent = 1.0; s.stage = "done".into(); s.message = format!("Finished {sid}"); }
+            Ok(_branches) => { s.running = false; s.percent = 1.0; s.stage = "done".into(); s.message = format!("Finished {sid}"); let m = s.message.clone(); s.log.push(m); }
             Err(e) => { s.running = false; s.stage = "error".into(); s.message = format!("Failed: {e}"); let m = s.message.clone(); s.log.push(m); }
         }
+        let _ = app.emit("sim-progress", &*s);
     });
     Ok(serde_json::json!({ "started": true, "scenario_id": scenario_id }))
 }
@@ -394,7 +431,7 @@ fn list_news(state: App<'_>, limit: Option<usize>) -> Result<Vec<worldsim_engine
     Ok(state.engine.lock().unwrap().storage().top_news_items(limit.unwrap_or(50)).unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 fn seed_news(state: App<'_>, scenario_id: String, branch_id: Option<String>, item_id: Option<String>, limit: Option<usize>) -> Result<serde_json::Value, String> {
     let e = state.engine.lock().unwrap();
     let st = e.storage();
@@ -441,7 +478,7 @@ async fn ensure_setup(app: AppHandle, state: App<'_>) -> Result<serde_json::Valu
                 let url = llama_url().ok_or("no llama.cpp download url")?;
                 let ext = if is_zip { "zip" } else { "tar.gz" };
                 let tmp = std::env::temp_dir().join(format!("worldsim-llama-{LLAMA_TAG}-{suffix}.{ext}"));
-                stream_download(&app2, &url, &tmp, "setup-progress").await?;
+                stream_download(&app2, &url, &tmp, "setup-progress", Some(&status), (0.0, 0.45)).await?;
                 set_status(&status, "engine", "Extracting llama.cpp…", 0.45);
                 extract_archive(&tmp, is_zip, &bin_dir)?;
                 for name in ["llama-cli", "llama-server"] {
@@ -471,8 +508,10 @@ async fn ensure_setup(app: AppHandle, state: App<'_>) -> Result<serde_json::Valu
                 }
                 let (url, _fname) = preset_for(spec.id).ok_or_else(|| format!("no preset url for {}", spec.id))?;
                 let msg = format!("Downloading {} ({})…", spec.name, spec.base_model);
-                set_status(&status, spec.id, &msg, 0.5 + 0.5 * (i as f64 / total as f64));
-                stream_download(&app2, &url, &p, "setup-progress").await?;
+                let base = 0.5 + 0.5 * (i as f64 / total as f64);
+                let span = 0.5 / total as f64;
+                set_status(&status, spec.id, &msg, base);
+                stream_download(&app2, &url, &p, "setup-progress", Some(&status), (base, span)).await?;
             }
             Ok(())
         })
@@ -491,22 +530,37 @@ async fn ensure_setup(app: AppHandle, state: App<'_>) -> Result<serde_json::Valu
 
 pub fn run() {
     let (db, models, bin) = resolve();
-    let engine = Engine::open(&db, &models, &bin)
-        .map_err(|e| { eprintln!("engine open failed: {e}"); std::process::exit(1); })
-        .unwrap();
-
-    let state = AppState {
-        engine: Arc::new(Mutex::new(engine)),
-        db_path: db,
-        models_dir: models,
-        bin_dir: bin,
-        sim_status: Arc::new(Mutex::new(SimStatus::default())),
-        setup_status: Arc::new(Mutex::new(SetupStatus::default())),
-    };
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(state)
+        .setup(move |app| {
+            let engine = Engine::open(&db, &models, &bin)
+                .map_err(|e| {
+                    eprintln!("engine open failed: {e}");
+                    std::process::exit(1);
+                })
+                .unwrap();
+
+            if let Some(seed) = find_seed_db(app) {
+                match engine.storage().seed_canonical_from(&seed) {
+                    Ok(n) if n > 0 => {
+                        eprintln!("seeded {n} canonical events from {}", seed.display());
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("canonical seed import failed: {e}"),
+                }
+            }
+
+            let state = AppState {
+                engine: Arc::new(Mutex::new(engine)),
+                db_path: db,
+                models_dir: models,
+                bin_dir: bin,
+                sim_status: Arc::new(Mutex::new(SimStatus::default())),
+                setup_status: Arc::new(Mutex::new(SetupStatus::default())),
+            };
+            app.manage(state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             status, list_scenarios, get_scenario, create_scenario, update_scenario,
             delete_scenario, branches, world, timeline, compare, simulate,
@@ -516,4 +570,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running WorldSimulator");
+}
+
+/// Locate a canonical seed DB: explicit env override first, then the bundled
+/// resource (release builds), then repo-local dev copies.
+fn find_seed_db(app: &tauri::App) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("WSIM_SEED_DB") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Ok(dir) = app.path().resource_dir() {
+        let p = dir.join("worldsim.db");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    for rel in ["../data/out/worldsim.db", "data/out/worldsim.db"] {
+        let p = PathBuf::from(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
 }
