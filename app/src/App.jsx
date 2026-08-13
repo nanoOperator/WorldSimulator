@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api.js";
+import { startTheme, navSound, toggleMute, isMuted } from "./audio.js";
 import WorldMap from "./components/WorldMap.jsx";
 import Timeline from "./components/Timeline.jsx";
 import PromptBox from "./components/PromptBox.jsx";
@@ -38,6 +39,19 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [news, setNews] = useState([]);
+  const [muted, setMuted] = useState(isMuted());
+
+  useEffect(() => {
+    const kick = () => startTheme();
+    window.addEventListener("pointerdown", kick, { once: true });
+    window.addEventListener("keydown", kick, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", kick);
+      window.removeEventListener("keydown", kick);
+    };
+  }, []);
+
+  const onToggleMute = useCallback(() => setMuted(toggleMute()), []);
 
   const refreshScenarios = useCallback(async () => {
     const list = await api.listScenarios();
@@ -101,6 +115,7 @@ export default function App() {
 
   const doSimulate = useCallback(async () => {
     if (!prompt.trim()) return;
+    navSound("alert");
     setBusy(true);
     let id = activeId;
     if (!id || scenarios.find((s) => s.id === id)?.prompt !== prompt) {
@@ -117,6 +132,7 @@ export default function App() {
   }, [prompt, activeId, scenarios, pollProgress]);
 
   const onSelectScenario = useCallback(async (s) => {
+    navSound("open");
     setActiveId(s.id);
     setPrompt(s.prompt || "");
     setActiveBranch(null);
@@ -125,7 +141,7 @@ export default function App() {
     if (br[0]) setActiveBranch(br[0].id);
   }, []);
 
-  const onSelectBranch = useCallback((bid) => setActiveBranch(bid), []);
+  const onSelectBranch = useCallback((bid) => { navSound("branch"); setActiveBranch(bid); }, []);
 
   const onDelete = useCallback(async (id) => {
     await api.deleteScenario(id);
@@ -136,6 +152,7 @@ export default function App() {
   }, [refreshScenarios]);
 
   const onSeek = useCallback(async (year) => {
+    navSound("click");
     if (!activeId) return;
     const w = await api.world(activeId, activeBranch);
     setGeojson(w.geojson);
@@ -143,11 +160,12 @@ export default function App() {
   }, [activeId, activeBranch]);
 
   const onSelectTerritory = useCallback((props) => {
-    // Could focus a nation panel; for now just log.
+    navSound("click");
     console.log("selected", props?.ownerName, props?.name);
   }, []);
 
   const refreshNews = useCallback(async () => {
+    navSound("click");
     await api.refreshNews();
     setNews(await api.news());
   }, []);
@@ -160,6 +178,9 @@ export default function App() {
         <span className="stat"><b>{scenarios.length}</b> scenarios</span>
         <span className="stat"><b>{snapshot ? (snapshot.nations || []).length : 0}</b> nations</span>
         <span className="spacer" />
+        <button className="secondary audio-toggle" onClick={onToggleMute} title="Toggle sound">
+          {muted ? "🔇 Muted" : "🔊 Sound"}
+        </button>
         <button className="secondary" onClick={refreshNews}>Refresh news</button>
       </div>
 
