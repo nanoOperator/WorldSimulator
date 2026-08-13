@@ -59,10 +59,15 @@
     <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/releases/download/v1.0.0/WorldSimulator_1.0.0_amd64.AppImage">Linux<small>.AppImage</small></a>
     <a class="dl" href="https://github.com/nanoOperator/WorldSimulator/archive/refs/tags/v1.0.0.tar.gz">Source<small>.tar.gz (tag v1.0.0)</small></a>
   </div>
-  <p class="note">The macOS, Windows, and Linux apps are built from the tagged source and attached to the
-     <a href="https://github.com/nanoOperator/WorldSimulator/releases/tag/v1.0.0">v1.0.0 release page</a>.
-     Prefer to build it yourself? One command:
-     <code>cd app &amp;&amp; npm install &amp;&amp; npm run tauri build</code>.</p>
+   <p class="note">The macOS, Windows, and Linux apps are built from the tagged source and attached to the
+      <a href="https://github.com/nanoOperator/WorldSimulator/releases/tag/v1.0.0">v1.0.0 release page</a>.
+      Prefer to build it yourself? One command:
+      <code>cd app &amp;&amp; npm install &amp;&amp; npm run tauri build</code>.</p>
+   <p class="note"><b>Local AI models.</b> The simulator runs out of the box with a deterministic engine,
+      and upgrades to on‑device LLM narration once the models are present. Inside the app, open
+      <b>Engine setup</b> (top bar) to download the <code>llama.cpp</code> engine and the GGUF models
+      with one click, or paste any direct <code>.gguf</code> URL. Models are stored under your user data
+      folder (<code>~/.worldsim/models</code> on macOS/Linux, <code>%APPDATA%\.worldsim\models</code> on Windows).</p>
 
   <h2>What it is</h2>
   <p>WorldSimulator is a local, offline desktop application that simulates alternate history. You

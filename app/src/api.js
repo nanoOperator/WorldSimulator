@@ -43,6 +43,10 @@ export const api = {
   refreshNews: () => invokeOrFetch("refresh_news", {}, "/api/news/refresh", "POST"),
   news: () => invokeOrFetch("list_news", {}, "/api/news"),
   seedNews: (itemId) => invokeOrFetch("seed_news", { itemId }, "/api/news/seed", "POST", { itemId }),
+  engineStatus: () => invokeOrFetch("engine_status", {}),
+  setupEngine: (force) => invokeOrFetch("setup_engine", { force: !!force }),
+  downloadModel: (url, filename, force) =>
+    invokeOrFetch("download_model", { url, filename, force: !!force }),
 };
 
 export const isDesktop = isTauri;

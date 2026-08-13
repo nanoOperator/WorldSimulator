@@ -107,3 +107,15 @@ textarea { resize: vertical; min-height: 64px; }
 
 .feed { font-size: 12px; color: var(--muted); }
 .feed .item { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex;
+  align-items: center; justify-content: center; z-index: 50; }
+.modal { width: min(560px, 92vw); max-height: 86vh; overflow: auto; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0;
+  border-bottom: 1px dashed var(--border); }
+.model-row input { width: 100%; margin: 4px 0; }
+.bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+.log { max-height: 160px; overflow: auto; }

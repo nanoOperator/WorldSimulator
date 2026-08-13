@@ -8,6 +8,7 @@ import ProgressBox from "./components/ProgressBox.jsx";
 import ScenarioPanel from "./components/ScenarioPanel.jsx";
 import BranchTree from "./components/BranchTree.jsx";
 import StatsPanel from "./components/StatsPanel.jsx";
+import SetupPanel from "./components/SetupPanel.jsx";
 
 const PALEO_MARKERS = [
   { label: "Fire", year: -1900000, short: "fire" },
@@ -40,6 +41,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [news, setNews] = useState([]);
   const [muted, setMuted] = useState(isMuted());
+  const [showSetup, setShowSetup] = useState(false);
 
   useEffect(() => {
     const kick = () => startTheme();
@@ -181,6 +183,9 @@ export default function App() {
         <button className="secondary audio-toggle" onClick={onToggleMute} title="Toggle sound">
           {muted ? "🔇 Muted" : "🔊 Sound"}
         </button>
+        <button className="secondary" onClick={() => { navSound("click"); setShowSetup(true); }}>
+          Engine setup
+        </button>
         <button className="secondary" onClick={refreshNews}>Refresh news</button>
       </div>
 
@@ -229,6 +234,7 @@ export default function App() {
       </div>
 
       <Timeline eras={eras} currentYear={snapshot?.date?.year || 2020} onSeek={onSeek} />
+      {showSetup && <SetupPanel onClose={() => setShowSetup(false)} />}
     </div>
   );
 }

@@ -1,10 +1,199 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use worldsim_engine::{date_from_iso, Engine, SimDate, SimProgress};
+
+// Pinned llama.cpp release used for the one-click engine download.
+const LLAMA_TAG: &str = "b10405";
+
+/// Resolve the (asset suffix, is_zip) for the current OS/architecture.
+fn llama_asset() -> Option<(&'static str, bool)> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => Some(("win-cpu-x64.zip", true)),
+        ("windows", "aarch64") => Some(("win-cpu-arm64.zip", true)),
+        ("macos", "aarch64") => Some(("macos-arm64.tar.gz", false)),
+        ("macos", "x86_64") => Some(("macos-x64.tar.gz", false)),
+        ("linux", "x86_64") => Some(("ubuntu-x64.tar.gz", false)),
+        ("linux", "aarch64") => Some(("ubuntu-arm64.tar.gz", false)),
+        _ => None,
+    }
+}
+
+fn llama_url() -> Option<String> {
+    let (suffix, _) = llama_asset()?;
+    Some(format!(
+        "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_TAG}/llama-{LLAMA_TAG}-bin-{suffix}"
+    ))
+}
+
+fn binary_present(dir: &PathBuf, name: &str) -> bool {
+    dir.join(name).is_file() || dir.join(format!("{name}.exe")).is_file()
+}
+
+/// Preset GGUF downloads (real base models stored under the engine's expected
+/// filenames so the simulation can use the local LLM out of the box).
+pub fn model_presets() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "id": "mustafakemal",
+            "name": "Mustafa Kemal (Qwen3-8B)",
+            "filename": "mustafakemal-causal-qwen3-8b-q4_k_m.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-8B-Instruct-GGUF/resolve/main/qwen3-8b-instruct-q4_k_m.gguf"
+        }),
+        serde_json::json!({
+            "id": "inalcik",
+            "name": "Inalcik (Qwen2.5-3B)",
+            "filename": "inalcik-data-qwen25-3b-q4_k_m.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
+        }),
+        serde_json::json!({
+            "id": "ortayli",
+            "name": "Ortayli (Qwen3-Embedding-0.6B)",
+            "filename": "ortayli-embedding-qwen3-0_6b-q4_k_m.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/qwen3-embedding-0.6b-q4_k_m.gguf"
+        }),
+    ]
+}
+
+async fn stream_download(app: &AppHandle, url: &str, dest: &PathBuf, event: &str) -> Result<(), String> {
+    use futures_util::StreamExt;
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await.map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("download failed: HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut file = std::fs::File::create(dest).map_err(|e| format!("create file: {e}"))?;
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("stream error: {e}"))?;
+        file.write_all(&chunk).map_err(|e| format!("write: {e}"))?;
+        downloaded += chunk.len() as u64;
+        let percent = if total > 0 { downloaded as f64 / total as f64 } else { -1.0 };
+        let _ = app.emit(
+            event,
+            serde_json::json!({ "stage": "download", "percent": percent, "downloaded": downloaded, "total": total }),
+        );
+    }
+    Ok(())
+}
+
+fn extract_archive(archive: &PathBuf, is_zip: bool, dest: &PathBuf) -> Result<(), String> {
+    if is_zip {
+        let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+        let mut z = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+        z.extract(dest).map_err(|e| e.to_string())?;
+    } else {
+        let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut ar = tar::Archive::new(dec);
+        ar.unpack(dest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn chmod_bin(p: &PathBuf) {
+    if cfg!(windows) {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    if p.is_file() {
+        if let Ok(meta) = std::fs::metadata(p) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(p, perms);
+        }
+    }
+}
+
+#[tauri::command]
+async fn setup_engine(app: AppHandle, state: App<'_>, force: Option<bool>) -> Result<serde_json::Value, String> {
+    let bin_dir = state.bin_dir.clone();
+    let force = force.unwrap_or(false);
+    if !force && (binary_present(&bin_dir, "llama-cli") || binary_present(&bin_dir, "llama-server")) {
+        return Ok(serde_json::json!({ "ok": true, "installed": true, "skipped": true }));
+    }
+    let (suffix, is_zip) = llama_asset().ok_or("unsupported platform for automatic llama.cpp download")?;
+    let url = llama_url().unwrap();
+    let _ = app.emit("engine-progress", serde_json::json!({ "stage": "resolving", "percent": 0.0, "message": url }));
+    let ext = if is_zip { "zip" } else { "tar.gz" };
+    let tmp = std::env::temp_dir().join(format!("worldsim-llama-{LLAMA_TAG}-{suffix}.{ext}"));
+    stream_download(&app, &url, &tmp, "engine-progress").await?;
+    let _ = app.emit("engine-progress", serde_json::json!({ "stage": "extracting", "percent": 1.0 }));
+    extract_archive(&tmp, is_zip, &bin_dir).map_err(|e| format!("extract failed: {e}"))?;
+    for name in ["llama-cli", "llama-server"] {
+        let target = if cfg!(windows) { bin_dir.join(format!("{name}.exe")) } else { bin_dir.join(name) };
+        if !target.is_file() {
+            for entry in walkdir::WalkDir::new(&bin_dir).into_iter().filter_map(|e| e.ok()) {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let f = entry.file_name().to_string_lossy();
+                if cfg!(windows) && f == format!("{name}.exe") || !cfg!(windows) && f == name {
+                    let _ = std::fs::copy(entry.path(), &target);
+                    break;
+                }
+            }
+        }
+        chmod_bin(&target);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    let ok = binary_present(&bin_dir, "llama-cli") || binary_present(&bin_dir, "llama-server");
+    let _ = app.emit("engine-progress", serde_json::json!({ "stage": "done", "percent": 1.0, "installed": ok }));
+    Ok(serde_json::json!({ "ok": true, "installed": ok }))
+}
+
+#[tauri::command]
+async fn download_model(app: AppHandle, state: App<'_>, url: String, filename: Option<String>, force: Option<bool>) -> Result<serde_json::Value, String> {
+    let models_dir = state.models_dir.clone();
+    let force = force.unwrap_or(false);
+    let fname = filename
+        .filter(|s| !s.is_empty())
+        .or_else(|| url.rsplit('/').next().map(|s| s.to_string()))
+        .ok_or("could not determine filename; pass one explicitly")?;
+    let dest = models_dir.join(&fname);
+    if dest.is_file() && !force {
+        return Ok(serde_json::json!({ "ok": true, "filename": fname, "skipped": true }));
+    }
+    stream_download(&app, &url, &dest, "model-progress").await?;
+    let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "ok": true, "filename": fname, "size": size }))
+}
+
+#[tauri::command]
+fn engine_status(state: App<'_>) -> Result<serde_json::Value, String> {
+    let bin_dir = state.bin_dir.clone();
+    let models_dir = state.models_dir.clone();
+    let cli = binary_present(&bin_dir, "llama-cli");
+    let srv = binary_present(&bin_dir, "llama-server");
+    let mut models = vec![];
+    for spec in worldsim_engine::models::all_models() {
+        let p = models_dir.join(spec.filename);
+        let present = p.is_file();
+        let size = if present { std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) } else { 0 };
+        models.push(serde_json::json!({
+            "id": spec.id,
+            "name": spec.name,
+            "filename": spec.filename,
+            "present": present,
+            "size": size,
+        }));
+    }
+    Ok(serde_json::json!({
+        "bin_dir": bin_dir.to_string_lossy().to_string(),
+        "models_dir": models_dir.to_string_lossy().to_string(),
+        "llama_cli": cli,
+        "llama_server": srv,
+        "engine_installed": cli || srv,
+        "models": models,
+        "presets": model_presets(),
+    }))
+}
 
 #[derive(Default, Clone, Serialize)]
 struct SimStatus {
@@ -28,11 +217,14 @@ type App<'a> = State<'a, AppState>;
 fn resolve() -> (PathBuf, PathBuf, PathBuf) {
     let home = std::env::var("HOME").or_else(|_| std::env::var("APPDATA")).unwrap_or_else(|_| ".".into());
     let base = PathBuf::from(home).join(".worldsim");
-    let _ = std::fs::create_dir_all(&base);
+    let models = base.join("models");
+    let bin = base.join("bin");
+    let _ = std::fs::create_dir_all(&models);
+    let _ = std::fs::create_dir_all(&bin);
     (
         base.join("worldsim.db"),
-        base.join("models"),
-        PathBuf::from(""),
+        models,
+        bin,
     )
 }
 
@@ -212,7 +404,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             status, list_scenarios, get_scenario, create_scenario, update_scenario,
             delete_scenario, branches, world, timeline, compare, simulate,
-            simulate_status, refresh_news, list_news, seed_news
+            simulate_status, refresh_news, list_news, seed_news,
+            setup_engine, download_model, engine_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running WorldSimulator");
