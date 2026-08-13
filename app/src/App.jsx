@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api, isDesktop } from "./api.js";
 import { startTheme, navSound, toggleMute, isMuted } from "./audio.js";
 import WorldMap from "./components/WorldMap.jsx";
@@ -9,23 +9,42 @@ import ScenarioPanel from "./components/ScenarioPanel.jsx";
 import BranchTree from "./components/BranchTree.jsx";
 import StatsPanel from "./components/StatsPanel.jsx";
 import SetupPanel from "./components/SetupPanel.jsx";
+import LogsPanel from "./components/LogsPanel.jsx";
 
 const PALEO_MARKERS = [
-  { label: "Fire", year: -1900000, short: "fire" },
+  { label: "Fire", year: -1900000, short: "Fire" },
   { label: "Out of Africa", year: -1700000, short: "OoA" },
-  { label: "Sapiens", year: -300000, short: "sap" },
-  { label: "Cave art", year: -45000, short: "art" },
-  { label: "Neolithic", year: -10000, short: "neo" },
-  { label: "Writing", year: -3200, short: "wr" },
-  { label: "Rome", year: 1, short: "R" },
-  { label: "Islam", year: 622, short: "Is" },
-  { label: "Printing", year: 1439, short: "pr" },
-  { label: "Columbus", year: 1492, short: "Co" },
-  { label: "WWI", year: 1914, short: "W1" },
-  { label: "WWII", year: 1939, short: "W2" },
-  { label: "Moon", year: 1969, short: "Mn" },
-  { label: "2020", year: 2020, short: "20" },
+  { label: "Sapiens", year: -300000, short: "Sapiens" },
+  { label: "Cave art", year: -45000, short: "Art" },
+  { label: "Neolithic", year: -10000, short: "Neolithic" },
+  { label: "Writing", year: -3200, short: "Writing" },
+  { label: "Rome", year: 1, short: "Rome" },
+  { label: "Islam", year: 622, short: "Islam" },
+  { label: "Printing", year: 1439, short: "Printing" },
+  { label: "Columbus", year: 1492, short: "Columbus" },
+  { label: "WWI", year: 1914, short: "WWI" },
+  { label: "WWII", year: 1939, short: "WWII" },
+  { label: "Moon", year: 1969, short: "Moon" },
+  { label: "2020", year: 2020, short: "2020" },
 ];
+
+const ERA_SHORT = {
+  "Paleolithic / First Fire": "Fire",
+  "Lower Paleolithic": "Lower",
+  "Middle Paleolithic": "Middle",
+  "Upper Paleolithic": "Upper",
+  "Mesolithic / Neolithic": "Neolithic",
+  "Bronze Age / Sumer": "Bronze",
+  "Classical Antiquity": "Classical",
+  "Middle Ages": "Medieval",
+  "Renaissance / Age of Sail": "Renaissance",
+  "Industrial Revolution": "Industrial",
+  "Imperial Era": "Imperial",
+  "World Wars": "World Wars",
+  "Cold War": "Cold War",
+  "Contemporary / Future": "Modern",
+};
+const shortFor = (name) => ERA_SHORT[name] || name.split("/")[0].trim();
 
 export default function App() {
   const [eras, setEras] = useState(PALEO_MARKERS);
@@ -35,6 +54,7 @@ export default function App() {
   const [activeBranch, setActiveBranch] = useState(null);
   const [geojson, setGeojson] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [worldDate, setWorldDate] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [progress, setProgress] = useState(null);
   const [prompt, setPrompt] = useState("");
@@ -43,6 +63,24 @@ export default function App() {
   const [muted, setMuted] = useState(isMuted());
   const [showSetup, setShowSetup] = useState(false);
   const [setup, setSetup] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const [logAutoScroll, setLogAutoScroll] = useState(true);
+  const lastLogRef = useRef("");
+
+  // Fold the backend's capped log buffer into an unbounded session log. The
+  // backend resets its buffer on each run and caps it at 200 lines, so we
+  // diff from the last seen message (which also survives cap eviction).
+  const mergeLogs = useCallback((st) => {
+    const arr = st?.log || [];
+    if (arr.length === 0) return;
+    const lastSeen = lastLogRef.current;
+    const idx = lastSeen ? arr.indexOf(lastSeen) : -1;
+    const fresh = idx >= 0 ? arr.slice(idx + 1) : arr;
+    if (fresh.length === 0) return;
+    lastLogRef.current = arr[arr.length - 1];
+    setLogs((prev) => [...prev, ...fresh.map((msg) => ({ msg, t: Date.now() }))]);
+  }, []);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -80,6 +118,18 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isDesktop) return;
+    let unsub = () => {};
+    api.onSimProgress((st) => {
+      setProgress(st);
+      mergeLogs(st);
+    }).then((un) => {
+      unsub = un;
+    });
+    return () => unsub();
+  }, [mergeLogs]);
+
   const onToggleMute = useCallback(() => setMuted(toggleMute()), []);
 
   const refreshScenarios = useCallback(async () => {
@@ -92,7 +142,7 @@ export default function App() {
   }, [activeId]);
 
   const loadWorld = useCallback(async () => {
-    const w = await api.world(activeId || "", activeBranch || "");
+    const w = await api.world(activeId || "", activeBranch || "", worldDate);
     // Attach owner population to each polygon for the 2.5D extrusion.
     const popById = {};
     for (const n of w.snapshot?.nations || []) popById[n.id] = n.population || 0;
@@ -113,16 +163,31 @@ export default function App() {
     } else {
       setComparison(null);
     }
-  }, [activeId, activeBranch]);
+  }, [activeId, activeBranch, worldDate]);
 
-  useEffect(() => { refreshScenarios(); api.status().then((s) => { if (s.eras) setEras(PALEO_MARKERS.concat(s.eras.map((e) => ({ label: e.label, year: e.year, short: String(e.year).slice(-2) })))); }); api.news().then(setNews).catch(() => {}); }, []);
-  useEffect(() => { loadWorld(); }, [loadWorld, activeId, activeBranch]);
+  useEffect(() => {
+    refreshScenarios();
+    api.status()
+      .then((s) => {
+        if (s.eras && s.eras.length) {
+          setEras(s.eras.map((e) => ({
+            label: e.name,
+            year: e.start?.year ?? e.year,
+            short: shortFor(e.name),
+          })));
+        }
+      })
+      .catch(() => {});
+    api.news().then(setNews).catch(() => {});
+  }, []);
+  useEffect(() => { loadWorld(); }, [loadWorld, activeId, activeBranch, worldDate]);
 
   const pollProgress = useCallback(() => {
     let cancelled = false;
     const tick = async () => {
       const st = await api.simulateStatus();
       setProgress(st);
+      mergeLogs(st);
       if (st.running && !cancelled) {
         setTimeout(tick, 700);
       } else if (!st.running) {
@@ -165,6 +230,7 @@ export default function App() {
     setActiveId(s.id);
     setPrompt(s.prompt || "");
     setActiveBranch(null);
+    setWorldDate(null);
     const br = await api.branches(s.id);
     setBranches(br);
     if (br[0]) setActiveBranch(br[0].id);
@@ -180,13 +246,10 @@ export default function App() {
     refreshScenarios();
   }, [refreshScenarios]);
 
-  const onSeek = useCallback(async (year) => {
+  const onSeek = useCallback((year) => {
     navSound("click");
-    if (!activeId) return;
-    const w = await api.world(activeId, activeBranch);
-    setGeojson(w.geojson);
-    setSnapshot(w.snapshot);
-  }, [activeId, activeBranch]);
+    setWorldDate(year < 0 ? `BCE ${-year}` : `${year}-01-01`);
+  }, []);
 
   const onSelectTerritory = useCallback((props) => {
     navSound("click");
@@ -212,6 +275,9 @@ export default function App() {
         </button>
         <button className="secondary" onClick={() => { navSound("click"); setShowSetup(true); }}>
           Engine setup
+        </button>
+        <button className="secondary logs-toggle" onClick={() => { navSound("click"); setShowLogs(true); }}>
+          Logs{logs.length ? ` (${logs.length})` : ""}
         </button>
         <button className="secondary" onClick={refreshNews}>Refresh news</button>
       </div>
@@ -280,6 +346,15 @@ export default function App() {
         </div>
       )}
       {showSetup && <SetupPanel onClose={() => setShowSetup(false)} />}
+      {showLogs && (
+        <LogsPanel
+          logs={logs}
+          autoScroll={logAutoScroll}
+          onToggleAutoScroll={() => setLogAutoScroll((v) => !v)}
+          onClear={() => { setLogs([]); lastLogRef.current = ""; }}
+          onClose={() => setShowLogs(false)}
+        />
+      )}
     </div>
   );
 }

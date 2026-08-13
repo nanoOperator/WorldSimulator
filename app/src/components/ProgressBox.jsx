@@ -1,18 +1,42 @@
+import { useEffect, useRef } from "react";
+
 export default function ProgressBox({ progress }) {
+  const logRef = useRef(null);
   const pct = progress ? Math.round(progress.percent * 100) : 0;
+  const last = progress?.log?.length || 0;
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [last]);
+
   return (
     <div className="progress card">
-      <h2>Progress {progress ? "" : "(idle)"}</h2>
+      <div className="progress-head">
+        <h2>
+          Simulation{" "}
+          {progress?.running
+            ? "running"
+            : progress?.log?.length
+            ? "finished"
+            : "(idle)"}
+        </h2>
+        {progress && <span className="progress-pct">{pct}%</span>}
+      </div>
       <div className="bar"><div style={{ width: `${pct}%` }} /></div>
       <div className="msg">
-        {progress
-          ? `${progress.stage} — ${progress.message}`
-          : "No simulation running."}
+        {progress?.message || "No simulation running."}
       </div>
-      {progress && progress.log && progress.log.length > 0 && (
-        <div className="feed" style={{ marginTop: 8 }}>
-          {progress.log.slice(-6).reverse().map((l, i) => (
-            <div className="item" key={i}>{l}</div>
+      {progress && last > 0 && (
+        <div className="log-feed" ref={logRef}>
+          {progress.log.map((l, i) => (
+            <div
+              key={i}
+              className={i === last - 1 ? "log-line latest" : "log-line"}
+            >
+              <span className="log-bullet">{i === last - 1 ? "▸" : "·"}</span>
+              {l}
+            </div>
           ))}
         </div>
       )}
