@@ -34,15 +34,16 @@ fn binary_present(dir: &PathBuf, name: &str) -> bool {
     dir.join(name).is_file() || dir.join(format!("{name}.exe")).is_file()
 }
 
-/// Preset GGUF downloads (real base models stored under the engine's expected
-/// filenames so the simulation can use the local LLM out of the box).
+/// Preset GGUF downloads. These are verified anonymously-downloadable files
+/// (HF "resolve" endpoints) saved under the engine's expected filenames so the
+/// simulation can use the local LLM out of the box.
 pub fn model_presets() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "id": "mustafakemal",
-            "name": "Mustafa Kemal (Qwen3-8B)",
+            "name": "Mustafa Kemal (Qwen2.5-7B)",
             "filename": "mustafakemal-causal-qwen3-8b-q4_k_m.gguf",
-            "url": "https://huggingface.co/Qwen/Qwen3-8B-Instruct-GGUF/resolve/main/qwen3-8b-instruct-q4_k_m.gguf"
+            "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
         }),
         serde_json::json!({
             "id": "inalcik",
@@ -54,9 +55,25 @@ pub fn model_presets() -> Vec<serde_json::Value> {
             "id": "ortayli",
             "name": "Ortayli (Qwen3-Embedding-0.6B)",
             "filename": "ortayli-embedding-qwen3-0_6b-q4_k_m.gguf",
-            "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/qwen3-embedding-0.6b-q4_k_m.gguf"
+            "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
         }),
     ]
+}
+
+fn preset_for(id: &str) -> Option<(String, String)> {
+    model_presets().into_iter().find(|v| v["id"] == id).map(|v| {
+        (
+            v["url"].as_str().unwrap_or_default().to_string(),
+            v["filename"].as_str().unwrap_or_default().to_string(),
+        )
+    })
+}
+
+fn set_status(s: &Arc<Mutex<SetupStatus>>, stage: &str, msg: &str, pct: f64) {
+    let mut st = s.lock().unwrap();
+    st.stage = stage.into();
+    st.message = msg.into();
+    st.percent = pct;
 }
 
 async fn stream_download(app: &AppHandle, url: &str, dest: &PathBuf, event: &str) -> Result<(), String> {
@@ -204,12 +221,21 @@ struct SimStatus {
     log: Vec<String>,
 }
 
+#[derive(Default, Clone, Serialize)]
+struct SetupStatus {
+    running: bool,
+    stage: String,
+    message: String,
+    percent: f64,
+}
+
 struct AppState {
     engine: Arc<Mutex<Engine>>,
     db_path: PathBuf,
     models_dir: PathBuf,
     bin_dir: PathBuf,
     sim_status: Arc<Mutex<SimStatus>>,
+    setup_status: Arc<Mutex<SetupStatus>>,
 }
 
 type App<'a> = State<'a, AppState>;
@@ -384,6 +410,85 @@ fn seed_news(state: App<'_>, scenario_id: String, branch_id: Option<String>, ite
     Ok(serde_json::json!({ "seeded": n, "item_id": item_id }))
 }
 
+#[tauri::command]
+fn setup_status(state: App<'_>) -> Result<SetupStatus, String> {
+    Ok(state.setup_status.lock().unwrap().clone())
+}
+
+/// One-click, no-button first-run setup: downloads the llama.cpp engine and any
+/// missing GGUF models in the background, emitting "setup-progress" events.
+#[tauri::command]
+async fn ensure_setup(app: AppHandle, state: App<'_>) -> Result<serde_json::Value, String> {
+    let bin_dir = state.bin_dir.clone();
+    let models_dir = state.models_dir.clone();
+    let status = state.setup_status.clone();
+    {
+        let mut s = status.lock().unwrap();
+        if s.running {
+            return Ok(serde_json::json!({ "running": true, "message": s.message }));
+        }
+        s.running = true;
+        s.stage = "checking".into();
+        s.message = "Checking local engine & models".into();
+        s.percent = 0.0;
+    }
+    let app2 = app.clone();
+    let _ = tauri::async_runtime::spawn(async move {
+        let result: Result<(), String> = (async {
+            if !(binary_present(&bin_dir, "llama-cli") || binary_present(&bin_dir, "llama-server")) {
+                set_status(&status, "engine", "Downloading llama.cpp engine…", 0.04);
+                let (suffix, is_zip) = llama_asset().ok_or("unsupported platform for automatic llama.cpp download")?;
+                let url = llama_url().ok_or("no llama.cpp download url")?;
+                let ext = if is_zip { "zip" } else { "tar.gz" };
+                let tmp = std::env::temp_dir().join(format!("worldsim-llama-{LLAMA_TAG}-{suffix}.{ext}"));
+                stream_download(&app2, &url, &tmp, "setup-progress").await?;
+                set_status(&status, "engine", "Extracting llama.cpp…", 0.45);
+                extract_archive(&tmp, is_zip, &bin_dir)?;
+                for name in ["llama-cli", "llama-server"] {
+                    let target = if cfg!(windows) { bin_dir.join(format!("{name}.exe")) } else { bin_dir.join(name) };
+                    if !target.is_file() {
+                        for entry in walkdir::WalkDir::new(&bin_dir).into_iter().filter_map(|e| e.ok()) {
+                            if !entry.file_type().is_file() {
+                                continue;
+                            }
+                            let f = entry.file_name().to_string_lossy();
+                            if (cfg!(windows) && f == format!("{name}.exe")) || (!cfg!(windows) && f == name) {
+                                let _ = std::fs::copy(entry.path(), &target);
+                                break;
+                            }
+                        }
+                    }
+                    chmod_bin(&target);
+                }
+                let _ = std::fs::remove_file(&tmp);
+            }
+            let models = worldsim_engine::models::all_models();
+            let total = models.len();
+            for (i, spec) in models.iter().enumerate() {
+                let p = models_dir.join(spec.filename);
+                if p.is_file() {
+                    continue;
+                }
+                let (url, _fname) = preset_for(spec.id).ok_or_else(|| format!("no preset url for {}", spec.id))?;
+                let msg = format!("Downloading {} ({})…", spec.name, spec.base_model);
+                set_status(&status, spec.id, &msg, 0.5 + 0.5 * (i as f64 / total as f64));
+                stream_download(&app2, &url, &p, "setup-progress").await?;
+            }
+            Ok(())
+        })
+        .await;
+        let mut s = status.lock().unwrap();
+        s.running = false;
+        s.stage = "done".into();
+        s.message = match result {
+            Ok(()) => "Setup complete. All local AI components are ready.".into(),
+            Err(e) => format!("Setup failed: {e}"),
+        };
+        s.percent = 1.0;
+    });
+    Ok(serde_json::json!({ "running": true }))
+}
+
 pub fn run() {
     let (db, models, bin) = resolve();
     let engine = Engine::open(&db, &models, &bin)
@@ -396,6 +501,7 @@ pub fn run() {
         models_dir: models,
         bin_dir: bin,
         sim_status: Arc::new(Mutex::new(SimStatus::default())),
+        setup_status: Arc::new(Mutex::new(SetupStatus::default())),
     };
 
     tauri::Builder::default()
@@ -405,7 +511,8 @@ pub fn run() {
             status, list_scenarios, get_scenario, create_scenario, update_scenario,
             delete_scenario, branches, world, timeline, compare, simulate,
             simulate_status, refresh_news, list_news, seed_news,
-            setup_engine, download_model, engine_status
+            setup_engine, download_model, engine_status,
+            setup_status, ensure_setup
         ])
         .run(tauri::generate_context!())
         .expect("error while running WorldSimulator");

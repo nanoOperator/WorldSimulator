@@ -47,6 +47,8 @@ export const api = {
   setupEngine: (force) => invokeOrFetch("setup_engine", { force: !!force }),
   downloadModel: (url, filename, force) =>
     invokeOrFetch("download_model", { url, filename, force: !!force }),
+  ensureSetup: () => invokeOrFetch("ensure_setup", {}),
+  setupStatus: () => invokeOrFetch("setup_status", {}),
 };
 
 export const isDesktop = isTauri;

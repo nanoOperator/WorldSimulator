@@ -23,8 +23,8 @@ html, body, #root {
 
 .app {
   display: grid;
-  grid-template-rows: 48px 1fr 220px;
-  grid-template-columns: 320px 1fr 340px;
+  grid-template-rows: 48px 1fr 160px;
+  grid-template-columns: 280px 1fr 320px;
   grid-template-areas:
     "topbar topbar topbar"
     "left   map    right"
@@ -119,3 +119,10 @@ textarea { resize: vertical; min-height: 64px; }
 .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
 .log { max-height: 160px; overflow: auto; }
+
+.setup-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex;
+  align-items: center; justify-content: center; z-index: 60; }
+.setup-card { width: min(460px, 90vw); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px 24px; text-align: center; }
+.setup-card h2 { margin: 0 0 8px; }
+.setup-card .bar { margin: 12px 0; }

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { api } from "./api.js";
+import { api, isDesktop } from "./api.js";
 import { startTheme, navSound, toggleMute, isMuted } from "./audio.js";
 import WorldMap from "./components/WorldMap.jsx";
 import Timeline from "./components/Timeline.jsx";
@@ -42,6 +42,33 @@ export default function App() {
   const [news, setNews] = useState([]);
   const [muted, setMuted] = useState(isMuted());
   const [showSetup, setShowSetup] = useState(false);
+  const [setup, setSetup] = useState(null);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await api.ensureSetup();
+      } catch (e) {
+        console.error("ensureSetup failed", e);
+      }
+      const tick = async () => {
+        try {
+          const s = await api.setupStatus();
+          if (cancelled) return;
+          setSetup(s);
+          if (s.running) setTimeout(tick, 1500);
+        } catch (e) {
+          console.error("setupStatus failed", e);
+        }
+      };
+      tick();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const kick = () => startTheme();
@@ -234,6 +261,24 @@ export default function App() {
       </div>
 
       <Timeline eras={eras} currentYear={snapshot?.date?.year || 2020} onSeek={onSeek} />
+      {setup?.running && (
+        <div className="setup-overlay">
+          <div className="setup-card">
+            <h2>Preparing WorldSimulator</h2>
+            <p className="meta">{setup.message}</p>
+            <div className="bar">
+              <div
+                className="bar-fill"
+                style={{ width: Math.max(2, Math.round(setup.percent * 100)) + "%" }}
+              />
+            </div>
+            <p className="meta">
+              First-run setup downloads the local AI engine and models automatically. This can
+              take a few minutes depending on your connection.
+            </p>
+          </div>
+        </div>
+      )}
       {showSetup && <SetupPanel onClose={() => setShowSetup(false)} />}
     </div>
   );
