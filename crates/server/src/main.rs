@@ -29,6 +29,8 @@ struct SimStatus {
     stage: String,
     message: String,
     log: Vec<String>,
+    done: u64,
+    total: u64,
 }
 
 struct AppState {
@@ -46,8 +48,11 @@ async fn main() {
         .init();
 
     let db_path = env_path("WSIM_DB", "worldsim.db");
-    let models_dir = env_path("WSIM_MODELS", "models");
-    let bin_dir = env_path("WSIM_BIN", "");
+    // Default to the shared install dir the desktop app uses, so a bare
+    // `cargo run -p worldsim-server` finds real models and llama.cpp.
+    let home = std::env::var("HOME").or_else(|_| std::env::var("APPDATA")).unwrap_or_default();
+    let models_dir = env_path("WSIM_MODELS", &format!("{home}/.worldsim/models"));
+    let bin_dir = env_path("WSIM_BIN", &format!("{home}/.worldsim/bin"));
     let static_dir = std::env::var("WSIM_STATIC").ok();
     let port: u16 = std::env::var("WSIM_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(7676);
 
@@ -61,6 +66,15 @@ async fn main() {
             std::process::exit(1);
         })
         .unwrap();
+
+    // Auto-import the canonical timeline on first run so the server's world is
+    // never empty. Override with WSIM_SEED_DB.
+    let seed_path = std::env::var("WSIM_SEED_DB").unwrap_or_else(|_| "data/out/worldsim.db".into());
+    match engine.storage().seed_canonical_from(&seed_path) {
+        Ok(n) if n > 0 => tracing::info!("seeded {n} canonical events from {seed_path}"),
+        Ok(_) => {}
+        Err(e) => eprintln!("note: canonical seed import failed: {e}"),
+    }
 
     let state = Arc::new(AppState {
         engine: Arc::new(Mutex::new(engine)),
@@ -240,23 +254,29 @@ async fn simulate(
     let scenario_id = scenario.id.clone();
     let scenario_id_for_json = scenario_id.clone();
     let status = st.sim_status.clone();
+    let total = options.max_steps as u64 * options.branch_count as u64;
     *status.lock().unwrap() = SimStatus {
         running: true,
         percent: 0.0,
         stage: "start".into(),
         message: format!("Starting simulation for scenario {scenario_id}"),
         log: vec![],
+        done: 0,
+        total,
     };
     std::thread::spawn(move || -> std::result::Result<(), String> {
         let cb_status = status.clone();
         let cb = std::sync::Arc::new(move |p: worldsim_engine::SimProgress| {
             let mut s = cb_status.lock().unwrap();
-            s.percent = (p.step as f64).max(s.percent);
-            s.stage = p.source.clone();
-            s.message = format!(
-                "{} | {} branch {} @ {} ({} events)",
-                p.note, p.branch_id, p.source, p.date, p.events_created
-            );
+            s.stage = p.phase.clone();
+            if p.phase == "step" || p.phase == "done" {
+                s.done += 1;
+            }
+            s.percent = if s.total > 0 { (s.done as f64 / s.total as f64).min(1.0) } else { 0.0 };
+            s.message = match p.phase.as_str() {
+                "plan" | "stats" | "validate" => format!("{} ({})", p.note, p.branch_id),
+                _ => format!("{} — {} events ({}): {}", p.branch_id, p.events_created, p.source, p.note),
+            };
             let msg = s.message.clone();
             s.log.push(msg);
             if s.log.len() > 200 {

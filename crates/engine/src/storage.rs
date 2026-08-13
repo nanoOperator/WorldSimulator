@@ -202,6 +202,36 @@ impl Storage {
             .query_row("SELECT COUNT(*) FROM canonical_events", [], |r| r.get(0))?)
     }
 
+    /// Import the canonical timeline from a seed DB (e.g. the bundled
+    /// `data/out/worldsim.db`) when this storage has none yet — or when the
+    /// bundled seed's `seed_version` is newer, in which case the canonical
+    /// history is replaced wholesale. Returns the number of events imported
+    /// (0 if nothing changed).
+    pub fn seed_canonical_from(&self, seed_path: impl AsRef<Path>) -> Result<i64> {
+        let path = seed_path.as_ref();
+        if !path.is_file() {
+            return Ok(0);
+        }
+        let seed = Storage::open(path)?;
+        if seed.canonical_event_count()? == 0 {
+            return Ok(0);
+        }
+        let seed_version = seed.get_meta("seed_version")?.unwrap_or_default();
+        let current = self.get_meta("seed_version")?.unwrap_or_default();
+        if self.canonical_event_count()? > 0 && (seed_version.is_empty() || current == seed_version) {
+            return Ok(0);
+        }
+        self.conn.execute("DELETE FROM canonical_events", [])?;
+        let events = seed.canonical_events_up_to(SimDate::from_ce(9999, 12, 31))?;
+        for ev in &events {
+            self.add_canonical_event(ev)?;
+        }
+        if !seed_version.is_empty() {
+            self.set_meta("seed_version", &seed_version)?;
+        }
+        Ok(events.len() as i64)
+    }
+
     fn row_to_event(
         &self,
         id: i64,
