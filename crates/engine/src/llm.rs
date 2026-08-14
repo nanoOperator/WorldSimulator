@@ -35,6 +35,8 @@ pub struct LlamaClient {
     server_url: Option<String>,
     server_failed: AtomicBool,
     managed_servers: Mutex<HashMap<String, ManagedServer>>,
+    /// Per-model startup lock: only one thread spawns a new server at a time.
+    spawn_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -56,6 +58,7 @@ impl LlamaClient {
             server_url,
             server_failed: AtomicBool::new(false),
             managed_servers: Mutex::new(HashMap::new()),
+            spawn_locks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -115,34 +118,82 @@ impl LlamaClient {
         None
     }
 
+    /// Get or create a per-model spawn lock (Arc<Mutex<()>>).
+    fn spawn_lock_for(&self, model_id: &str) -> Result<std::sync::Arc<Mutex<()>>> {
+        let mut locks = self
+            .spawn_locks
+            .lock()
+            .map_err(|_| EngineError::Llm("spawn_locks poisoned".into()))?;
+        Ok(locks
+            .entry(model_id.to_string())
+            .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
+            .clone())
+    }
+
     /// Ensure a llama-server instance is running for the requested model spec.
+    ///
+    /// The `managed_servers` mutex is held only during quick map operations.
+    /// The slow /health poll loop runs with NO locks held so concurrent branch
+    /// threads are never deadlocked.  A per-model `spawn_lock` prevents two
+    /// threads from racing to spawn a second server for the same model.
     fn ensure_server(&self, spec: &ModelSpec) -> Result<Option<String>> {
+        // Fast path: external server configured via env.
         if let Some(url) = &self.server_url {
             if !self.server_failed.load(Ordering::SeqCst) {
                 return Ok(Some(url.clone()));
             }
         }
 
-        let mut servers = self
-            .managed_servers
-            .lock()
-            .map_err(|_| EngineError::Llm("mutex poisoned".into()))?;
-
-        if let Some(m) = servers.get(spec.id) {
-            let client = reqwest::blocking::Client::new();
-            let healthy = client
-                .get(format!("{}/health", m.url))
-                .timeout(Duration::from_millis(600))
-                .send()
-                .map(|r| r.status().is_success())
-                .unwrap_or(false);
-            if healthy {
-                return Ok(Some(m.url.clone()));
+        // Fast path: already have a healthy managed server (brief lock).
+        {
+            let servers = self
+                .managed_servers
+                .lock()
+                .map_err(|_| EngineError::Llm("mutex poisoned".into()))?;
+            if let Some(m) = servers.get(spec.id) {
+                let client = reqwest::blocking::Client::new();
+                let healthy = client
+                    .get(format!("{}/health", m.url))
+                    .timeout(Duration::from_millis(600))
+                    .send()
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if healthy {
+                    return Ok(Some(m.url.clone()));
+                }
+                // Stale — fall through to respawn.
             }
-            // Stale server, remove and respawn
-            servers.remove(spec.id);
         }
 
+        // Per-model spawn lock: only one thread runs the slow spawn+poll path.
+        // Other threads for the same model will block here (not on managed_servers).
+        let spawn_lock = self.spawn_lock_for(spec.id)?;
+        let _spawn_guard = spawn_lock
+            .lock()
+            .map_err(|_| EngineError::Llm("spawn_lock poisoned".into()))?;
+
+        // Re-check after acquiring the spawn lock — a sibling thread may have
+        // already started the server while we were waiting.
+        {
+            let servers = self
+                .managed_servers
+                .lock()
+                .map_err(|_| EngineError::Llm("mutex poisoned".into()))?;
+            if let Some(m) = servers.get(spec.id) {
+                let client = reqwest::blocking::Client::new();
+                let healthy = client
+                    .get(format!("{}/health", m.url))
+                    .timeout(Duration::from_millis(600))
+                    .send()
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if healthy {
+                    return Ok(Some(m.url.clone()));
+                }
+            }
+        }
+
+        // Need to spawn a new server.
         let Some(binary) = self.find_binary("llama-server") else {
             return Ok(None);
         };
@@ -182,14 +233,22 @@ impl LlamaClient {
             .stderr(Stdio::null());
 
         let child = cmd.spawn().map_err(|e| EngineError::Llm(e.to_string()))?;
-        servers.insert(
-            spec.id.to_string(),
-            ManagedServer {
-                child,
-                url: url.clone(),
-            },
-        );
+        log::info!("spawned llama-server for {} on port {port}", spec.id);
 
+        // Insert into map (brief lock), then release before slow health poll.
+        {
+            let mut servers = self
+                .managed_servers
+                .lock()
+                .map_err(|_| EngineError::Llm("mutex poisoned".into()))?;
+            servers.remove(spec.id); // drop any stale entry
+            servers.insert(
+                spec.id.to_string(),
+                ManagedServer { child, url: url.clone() },
+            );
+        } // <-- managed_servers mutex released here
+
+        // Poll /health with NO locks held — other threads remain unblocked.
         let deadline = Instant::now() + Duration::from_secs(90);
         let client = reqwest::blocking::Client::new();
         loop {
@@ -200,12 +259,15 @@ impl LlamaClient {
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
             if ok {
+                log::info!("llama-server for {} ready at {url}", spec.id);
                 return Ok(Some(url));
             }
             if Instant::now() >= deadline {
-                servers.remove(spec.id);
+                if let Ok(mut servers) = self.managed_servers.lock() {
+                    servers.remove(spec.id);
+                }
                 return Err(EngineError::Llm(format!(
-                    "llama-server for {} did not become healthy in time",
+                    "llama-server for {} did not become healthy in 90s",
                     spec.id
                 )));
             }
