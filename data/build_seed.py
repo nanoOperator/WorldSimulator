@@ -19,9 +19,12 @@ Usage:  python3 data/build_seed.py
 """
 
 import json
+import math
 import os
 import sqlite3
 import sys
+
+from country_facts import ECON, ETHNICITY, NATIONS, RELIGION
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.join(HERE, "raw", "ne_110m_admin_0_countries.geojson")
@@ -967,21 +970,51 @@ def make_baseline(era_key, date, owner_map):
     }
 
 
+def log_index(value, vmin, vmax):
+    """Map a positive magnitude onto 0-100 on a log scale (vmin <= value <= vmax)."""
+    if value <= 0:
+        return 0.0
+    lo, hi = math.log10(vmin), math.log10(vmax)
+    return round(100.0 * (math.log10(value) - lo) / (hi - lo), 1)
+
+
+# Global ranges from the real 2020 data, used to scale indices 0-100.
+_ECON_VALUES = [e["gdp"] for e in ECON.values() if e["gdp"] > 0]
+_MIL_VALUES = [e["mil"] for e in ECON.values() if e["mil"] > 0]
+_ECON_MIN, _ECON_MAX = min(_ECON_VALUES), max(_ECON_VALUES)
+_MIL_MIN, _MIL_MAX = min(_MIL_VALUES), max(_MIL_VALUES)
+
+
+def modern_indices(iso):
+    """Real economy/military indices (0-100) from 2020 GDP and mil spending."""
+    e = ECON.get(iso)
+    if not e:
+        return 50.0, 20.0
+    return (
+        log_index(e["gdp"], _ECON_MIN, _ECON_MAX),
+        log_index(e["mil"], _MIL_MIN, _MIL_MAX),
+    )
+
+
 def make_modern_2020():
     nations = []
     territories = []
     for c in COUNTRIES:
         iso = c["iso"]
+        econ, mil = modern_indices(iso)
         nations.append({
             "id": iso,
             "name": c["admin"],
             "color": color_hash(iso),
             "population": int(c["pop"]),
-            "religion_pct": MODERN_RELIGION.get(iso, [["Multiple/Unspecified", 100.0]]),
-            "ethnicity_pct": MODERN_ETHNICITY.get(iso, [["Multiple/Unspecified", 100.0]]),
-            "economy_index": 50.0,
-            "military_index": 20.0,
+            "religion_pct": RELIGION.get(iso, MODERN_RELIGION.get(iso, [["Multiple/Unspecified", 100.0]])),
+            "ethnicity_pct": ETHNICITY.get(iso, MODERN_ETHNICITY.get(iso, [["Unspecified", 100.0]])),
+            "economy_index": econ,
+            "military_index": mil,
             "territories": [],
+            "founded": NATIONS.get(iso, {}).get("founded"),
+            "leader": NATIONS.get(iso, {}).get("leader"),
+            "leader_title": NATIONS.get(iso, {}).get("title"),
         })
         territories.append({
             "id": iso,

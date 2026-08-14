@@ -459,7 +459,7 @@ fn historical_context(
     scenario: &Scenario,
     options: &SimulationOptions,
 ) -> Result<String> {
-    let client = crate::retrieval::EmbedClient::new(&llm.models_dir);
+    let mut client = crate::retrieval::EmbedClient::new(&llm.models_dir, llm.binary_dir());
     if !client.available() {
         return Ok(String::new());
     }
@@ -473,8 +473,8 @@ fn historical_context(
         .take(600)
         .map(|e| format!("{}: {}. {}", e.date.display(), e.title, e.body))
         .collect();
-    let idx = crate::retrieval::build_index(&client, &docs)?;
-    let hits = idx.query(&client, &scenario.prompt, 6)?;
+    let mut idx = crate::retrieval::build_index(&mut client, &docs)?;
+    let hits = idx.query(&mut client, &scenario.prompt, 6)?;
     if hits.is_empty() {
         return Ok(String::new());
     }

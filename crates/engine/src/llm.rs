@@ -46,6 +46,11 @@ impl LlamaClient {
         self.binary_dir.join("llama-b10405")
     }
 
+    /// Directory where the llama.cpp binaries live (used by embed clients too).
+    pub fn binary_dir(&self) -> &Path {
+        &self.binary_dir
+    }
+
     /// Quick check that the binary can actually start (dylibs present).
     fn binary_runs(&self, binary: &std::path::Path) -> bool {
         let lib_dir = self.lib_dir();
@@ -234,7 +239,7 @@ impl LlamaClient {
 }
 
 /// Wait for a child process to finish, or kill it after `timeout` and return None.
-fn wait_or_kill(
+pub(crate) fn wait_or_kill(
     child: &mut std::process::Child,
     timeout: std::time::Duration,
 ) -> Option<std::io::Result<std::process::Output>> {
