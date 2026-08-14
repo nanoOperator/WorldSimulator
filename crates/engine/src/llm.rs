@@ -37,6 +37,9 @@ pub struct LlamaClient {
     managed_servers: Mutex<HashMap<String, ManagedServer>>,
     /// Per-model startup lock: only one thread spawns a new server at a time.
     spawn_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
+    /// Per-model completion lock: llama-server b10405 has 1 inference slot;
+    /// concurrent POSTs return HTTP 500. Queue them instead.
+    completion_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,6 +62,7 @@ impl LlamaClient {
             server_failed: AtomicBool::new(false),
             managed_servers: Mutex::new(HashMap::new()),
             spawn_locks: Mutex::new(HashMap::new()),
+            completion_locks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -124,6 +128,18 @@ impl LlamaClient {
             .spawn_locks
             .lock()
             .map_err(|_| EngineError::Llm("spawn_locks poisoned".into()))?;
+        Ok(locks
+            .entry(model_id.to_string())
+            .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
+            .clone())
+    }
+
+    /// Get or create a per-model completion lock (Arc<Mutex<()>>).
+    fn completion_lock_for(&self, model_id: &str) -> Result<std::sync::Arc<Mutex<()>>> {
+        let mut locks = self
+            .completion_locks
+            .lock()
+            .map_err(|_| EngineError::Llm("completion_locks poisoned".into()))?;
         Ok(locks
             .entry(model_id.to_string())
             .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
@@ -291,6 +307,11 @@ impl LlamaClient {
         //    when the GGUF has a chat template, even with --no-conversation.
         match self.ensure_server(spec) {
             Ok(Some(url)) => {
+                let comp_lock = self.completion_lock_for(spec.id)?;
+                let _comp_guard = comp_lock
+                    .lock()
+                    .map_err(|_| EngineError::Llm("completion_lock poisoned".into()))?;
+
                 match self.generate_http(&url, spec, system, prompt, temp, seed, max_tokens) {
                     Ok(r) => return Ok(Some(r)),
                     Err(e) => {

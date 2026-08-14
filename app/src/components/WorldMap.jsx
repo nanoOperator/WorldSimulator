@@ -54,19 +54,19 @@ export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst, f
       filled: true,
       extruded: true,
       pickable: true,
-      lineWidthMinPixels: 0.5,
+      lineWidthMinPixels: 1.2,
       getFillColor: (f) => hexToRgb(f.properties.color || "#888888"),
-      getLineColor: [20, 24, 32],
+      getLineColor: [10, 15, 25, 255],
       getElevation: (f) => {
         // 2.5D extrusion: bigger nations pop more.
         const pop = Number(f.properties.population || 0);
-        return Math.min(800000, pop / 200000) + 20;
+        return Math.min(600000, pop / 300000) + 10;
       },
-      material: { ambient: 0.6, diffuse: 0.6, shininess: 32, specularColor: [60, 64, 80] },
+      material: { ambient: 0.7, diffuse: 0.6, shininess: 32, specularColor: [60, 64, 80] },
       onClick: (info) => {
         if (info.object && onSelect) onSelect(info.object.properties);
       },
-      updateTriggers: { getFillColor: geojson },
+      updateTriggers: { getFillColor: geojson, getElevation: geojson },
     });
   }, [geojson, onSelect]);
 
