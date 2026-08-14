@@ -328,3 +328,107 @@ button.mini { padding: 2px 8px; font-size: 11px; }
 .nation-list::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Divergence picker ---------------------------------------------------- */
+.divergence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.divergence-row label {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.divergence-row select { flex: 1; min-width: 0; }
+
+/* Map date badge ------------------------------------------------------- */
+.map-date {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  background: rgba(13, 17, 23, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  text-align: right;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.map-date-year { display: block; font-size: 15px; font-weight: 700; color: var(--text); }
+.map-date-full { display: block; font-size: 11px; color: var(--muted); }
+
+/* Map loading spinner -------------------------------------------------- */
+.map-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  background: rgba(13, 17, 23, 0.7);
+  border-radius: 50%;
+  padding: 12px;
+  pointer-events: none;
+}
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scenario panel ------------------------------------------------------- */
+.scenario-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scenario-item-top .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-branches {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+/* Branch status dots --------------------------------------------------- */
+.branch-item-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.branch-item-top .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+.branch-dot.running {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+.branch-dot.done { background: var(--accent-2); }
+.branch-dot.failed { background: #f85149; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Interaction polish --------------------------------------------------- */
+button { transition: filter 0.15s ease, transform 0.1s ease; }
+button:hover { filter: brightness(1.15); }
+button:active { transform: translateY(1px); }
+button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.scenario-item, .branch-item { transition: border-color 0.15s ease; }

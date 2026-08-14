@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { api, isDesktop } from "./api.js";
 import { startTheme, navSound, toggleMute, isMuted } from "./audio.js";
 import WorldMap from "./components/WorldMap.jsx";
@@ -57,6 +57,9 @@ export default function App() {
   const [snapshot, setSnapshot] = useState(null);
   const [worldDate, setWorldDate] = useState(null);
   const [comparison, setComparison] = useState(null);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [focusNation, setFocusNation] = useState("");
+  const [divergence, setDivergence] = useState(1945);
   const [timelineMax, setTimelineMax] = useState(2026);
   const [progress, setProgress] = useState(null);
   const [prompt, setPrompt] = useState("");
@@ -145,7 +148,14 @@ export default function App() {
   }, [activeId]);
 
   const loadWorld = useCallback(async () => {
-    const w = await api.world(activeId || "", activeBranch || "", worldDate);
+    setMapLoading(true);
+    let w;
+    try {
+      w = await api.world(activeId || "", activeBranch || "", worldDate);
+    } catch (e) {
+      setMapLoading(false);
+      return;
+    }
     // Attach owner population to each polygon for the 2.5D extrusion.
     const popById = {};
     for (const n of w.snapshot?.nations || []) popById[n.id] = n.population || 0;
@@ -156,6 +166,7 @@ export default function App() {
     }
     setGeojson(w.geojson);
     setSnapshot(w.snapshot);
+    setMapLoading(false);
     if (activeBranch) {
       try {
         const c = await api.compare(activeId, activeBranch);
@@ -184,6 +195,22 @@ export default function App() {
     api.news().then(setNews).catch(() => {});
   }, []);
    useEffect(() => { loadWorld(); }, [loadWorld, activeId, activeBranch, worldDate]);
+
+   const fmtYear = useCallback((y) => (y <= 0 ? `${1 - y} BCE` : `${y} CE`), []);
+
+   // Divergence choices for new scenarios, derived from era baselines.
+   const divergenceOptions = useMemo(() => {
+     const seen = new Set();
+     const out = [];
+     for (const e of eras || []) {
+       const y = e.year ?? e.start?.year;
+       if (y == null || y < -3200 || seen.has(y)) continue;
+       seen.add(y);
+       out.push({ year: y, label: `${fmtYear(y)} — ${e.short || e.label || e.name}` });
+     }
+     if (!seen.has(1945)) out.push({ year: 1945, label: "1945 CE — WWII end" });
+     return out.sort((a, b) => a.year - b.year);
+   }, [eras, fmtYear]);
 
    // Only extend the timeline past the present if a simulation actually
    // produced events beyond it. Otherwise the seekable range is capped at today.
@@ -236,19 +263,21 @@ export default function App() {
       const sc = await api.createScenario({
         name: prompt.slice(0, 60),
         prompt,
-        divergence: "1945-01-01",
+        divergence: divergence < 0 ? `BCE ${-divergence}` : `${divergence}-01-01`,
       });
       id = sc.id;
       setActiveId(id);
     }
     await api.simulate({ scenario_id: id, target_date: "2100", branch_count: 3, force_fallback: false });
     pollProgress();
-  }, [prompt, activeId, scenarios, pollProgress]);
+  }, [prompt, activeId, scenarios, pollProgress, divergence]);
 
   const onSelectScenario = useCallback(async (s) => {
     navSound("open");
     setActiveId(s.id);
     setPrompt(s.prompt || "");
+    setFocusNation("");
+    setDivergence(s.divergence?.year ?? 1945);
     setActiveBranch(null);
     setWorldDate(null);
     const br = await api.branches(s.id);
@@ -273,13 +302,27 @@ export default function App() {
 
   const onSelectTerritory = useCallback((props) => {
     navSound("click");
-    console.log("selected", props?.ownerName, props?.name);
+    setFocusNation(props?.owner || "");
   }, []);
 
   const refreshNews = useCallback(async () => {
     navSound("click");
-    await api.refreshNews();
-    setNews(await api.news());
+    try {
+      await api.refreshNews();
+    } catch {}
+    // The server now returns immediately and fetches feeds in the background,
+    // so poll until the first batch lands.
+    const poll = async (left) => {
+      try {
+        const items = await api.news();
+        if (items.length) {
+          setNews(items);
+          return;
+        }
+      } catch {}
+      if (left > 0) setTimeout(() => poll(left - 1), 1500);
+    };
+    poll(6);
   }, []);
 
   return (
@@ -319,6 +362,9 @@ export default function App() {
           busy={busy}
           scenarios={scenarios}
           onCreate={onSelectScenario}
+          divergence={divergence}
+          onDivergence={setDivergence}
+          divergenceOptions={divergenceOptions}
         />
         <BranchTree branches={branches} activeBranch={activeBranch} onSelect={onSelectBranch} />
       </div>
@@ -329,7 +375,19 @@ export default function App() {
           selected={activeBranch}
           onSelect={onSelectTerritory}
           onJumpToFirst={() => onSeek(eras.length ? Math.min(...eras.map((e) => e.year)) : -3200)}
+          focusId={focusNation}
         />
+        {mapLoading && <div className="map-loading"><div className="spinner" /></div>}
+        {snapshot && !mapLoading && (
+          <div className="map-date">
+            <span className="map-date-year">{fmtYear(snapshot.date?.year ?? 2026)}</span>
+            {snapshot.date && (
+              <span className="map-date-full">
+                {snapshot.date.year}-{String(snapshot.date.month).padStart(2, "0")}-{String(snapshot.date.day).padStart(2, "0")}
+              </span>
+            )}
+          </div>
+        )}
         <div className="legend">
           {(snapshot?.nations || []).slice(0, 12).map((n) => (
             <div key={n.id}>
@@ -341,7 +399,7 @@ export default function App() {
       </div>
 
       <div className="pane right">
-        <StatsPanel snapshot={snapshot} comparison={comparison} />
+        <StatsPanel snapshot={snapshot} comparison={comparison} focusId={focusNation} onFocus={setFocusNation} />
         <ProgressBox progress={progress} onOpenLogs={() => setShowLogs(true)} />
         <div className="card">
           <h2>News signals</h2>

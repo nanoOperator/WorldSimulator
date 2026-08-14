@@ -9,9 +9,12 @@ export default function BranchTree({ branches, activeBranch, onSelect }) {
           className={`branch-item ${b.id === activeBranch ? "active" : ""}`}
           onClick={() => onSelect(b.id)}
         >
-          <div className="title">{b.label || b.id}</div>
+          <div className="branch-item-top">
+            <span className={`branch-dot ${b.status || "pending"}`} title={b.status || "pending"} />
+            <div className="title">{b.label || b.id}</div>
+          </div>
           <div className="meta">
-            seed {b.seed} · events {b.event_count ?? 0} · {b.final_date ?? ""}
+            seed {b.seed} · events {b.event_count ?? 0}{b.final_date ? ` · ${b.final_date}` : ""}
           </div>
         </div>
       ))}

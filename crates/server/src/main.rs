@@ -450,15 +450,25 @@ async fn compare(
 // ------------------------------------------------------------------- news
 
 async fn news_refresh(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let engine = st.engine.lock().unwrap();
-    let storage = engine.storage();
-    if storage.list_news_sources().map_err(err500)?.is_empty() {
-        for (id, url, trust) in worldsim_engine::news::default_sources() {
-            storage.add_news_source(&id, &url, trust).map_err(err500)?;
+    let db_path = st.db_path.clone();
+    {
+        let engine = st.engine.lock().unwrap();
+        let storage = engine.storage();
+        if storage.list_news_sources().map_err(err500)?.is_empty() {
+            for (id, url, trust) in worldsim_engine::news::default_sources() {
+                storage.add_news_source(&id, &url, trust).map_err(err500)?;
+            }
         }
     }
-    let added = worldsim_engine::news::fetch_all(storage).map_err(err500)?;
-    Ok(Json(serde_json::json!({ "added": added, "pending": storage.unprocessed_news_count().unwrap_or(0) })))
+    // Fetch feeds on a background thread so the engine lock is never held for
+    // the (up to ~80s) network work, and so blocking reqwest calls never run
+    // inside the tokio async runtime (which panics).
+    std::thread::spawn(move || {
+        if let Ok(storage) = worldsim_engine::storage::Storage::open(&db_path) {
+            let _ = worldsim_engine::news::fetch_all(&storage);
+        }
+    });
+    Ok(Json(serde_json::json!({ "started": true })))
 }
 
 #[derive(Deserialize)]

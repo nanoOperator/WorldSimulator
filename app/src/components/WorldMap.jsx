@@ -42,7 +42,7 @@ const MAP_STYLE = {
   ],
 };
 
-export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst }) {
+export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst, focusId }) {
   const mapRef = useRef(null);
 
   const layer = useMemo(() => {
@@ -70,6 +70,23 @@ export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst })
     });
   }, [geojson, onSelect]);
 
+  // White outline around the focused nation so map clicks read back visually.
+  const focusLayer = useMemo(() => {
+    if (!geojson || !geojson.features || !focusId) return null;
+    return new GeoJsonLayer({
+      id: "focus",
+      data: {
+        ...geojson,
+        features: geojson.features.filter((f) => f.properties.owner === focusId),
+      },
+      stroked: true,
+      filled: false,
+      lineWidthMinPixels: 2.5,
+      getLineColor: [255, 255, 255],
+      pickable: false,
+    });
+  }, [geojson, focusId]);
+
   useEffect(() => {
     if (mapRef.current) mapRef.current.resize();
   }, []);
@@ -81,7 +98,7 @@ export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst })
       <DeckGL
         initialViewState={{ longitude: 10, latitude: 30, zoom: 1.3, pitch: 45, bearing: 0 }}
         controller={true}
-        layers={layer ? [layer] : []}
+        layers={layer ? [layer, focusLayer].filter(Boolean) : []}
         style={{ position: "absolute", inset: 0 }}
       >
         <Map

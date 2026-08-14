@@ -1,8 +1,15 @@
 import { useMemo, useState } from "react";
 
-export default function StatsPanel({ snapshot, comparison }) {
+export default function StatsPanel({ snapshot, comparison, focusId, onFocus }) {
   const [query, setQuery] = useState("");
-  const [focusId, setFocusId] = useState("");
+  const [localFocus, setLocalFocus] = useState("");
+
+  const controlled = focusId !== undefined;
+  const activeFocus = controlled ? focusId : localFocus;
+  const handleFocus = useMemo(
+    () => (controlled ? onFocus || (() => {}) : setLocalFocus),
+    [controlled, onFocus]
+  );
 
   const nations = snapshot ? snapshot.nations || [] : [];
   const totalPop = nations.reduce((a, n) => a + (n.population || 0), 0);
@@ -18,8 +25,8 @@ export default function StatsPanel({ snapshot, comparison }) {
     return sorted.filter((n) => n.name.toLowerCase().includes(q));
   }, [sorted, query]);
 
-  const focus = focusId
-    ? nations.find((n) => n.id === focusId)
+  const focus = activeFocus
+    ? nations.find((n) => n.id === activeFocus)
     : query.trim()
     ? shown[0]
     : null;
@@ -36,7 +43,7 @@ export default function StatsPanel({ snapshot, comparison }) {
       </div>
 
       <div className="nation-controls">
-        <select value={focusId} onChange={(e) => { setFocusId(e.target.value); setQuery(""); }}>
+        <select value={activeFocus} onChange={(e) => { handleFocus(e.target.value); setQuery(""); }}>
           <option value="">Select a country…</option>
           {nations.slice().sort((a, b) => a.name.localeCompare(b.name)).map((n) => (
             <option key={n.id} value={n.id}>{n.name}</option>
@@ -45,7 +52,7 @@ export default function StatsPanel({ snapshot, comparison }) {
         <input
           placeholder="Search countries…"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setFocusId(""); }}
+          onChange={(e) => { setQuery(e.target.value); handleFocus(""); }}
         />
       </div>
 
@@ -94,9 +101,9 @@ export default function StatsPanel({ snapshot, comparison }) {
       <div className="nation-list">
         {shown.map((n) => (
           <div
-            className={`nation-row${n.id === focusId ? " active" : ""}`}
+            className={`nation-row${n.id === activeFocus ? " active" : ""}`}
             key={n.id}
-            onClick={() => setFocusId(n.id)}
+            onClick={() => handleFocus(n.id)}
           >
             <span className="dot" style={{ background: n.color }} />
             <span className="nation-name">{n.name}</span>

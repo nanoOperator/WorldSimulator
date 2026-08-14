@@ -1,4 +1,4 @@
-export default function PromptBox({ value, onChange, onSimulate, busy, scenarios, onCreate }) {
+export default function PromptBox({ value, onChange, onSimulate, busy, scenarios, onCreate, divergence, onDivergence, divergenceOptions }) {
   return (
     <div className="card">
       <h2>Divergence prompt</h2>
@@ -7,6 +7,19 @@ export default function PromptBox({ value, onChange, onSimulate, busy, scenarios
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+      <div className="divergence-row">
+        <label htmlFor="divergence">Diverge at</label>
+        <select
+          id="divergence"
+          value={divergence}
+          onChange={(e) => onDivergence(Number(e.target.value))}
+          title="Year the alternate timeline branches from real history"
+        >
+          {(divergenceOptions || []).map((o) => (
+            <option key={o.year} value={o.year}>{o.label}</option>
+          ))}
+        </select>
+      </div>
       <div className="row" style={{ marginTop: 8 }}>
         <select defaultValue="" onChange={(e) => {
           if (!e.target.value) return;
