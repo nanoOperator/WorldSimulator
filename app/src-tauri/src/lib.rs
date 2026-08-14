@@ -415,15 +415,25 @@ fn simulate_status(state: App<'_>) -> Result<SimStatus, String> {
 
 #[tauri::command]
 fn refresh_news(state: App<'_>) -> Result<serde_json::Value, String> {
-    let e = state.engine.lock().unwrap();
-    let st = e.storage();
-    if st.list_news_sources().unwrap_or_default().is_empty() {
-        for (id, url, trust) in worldsim_engine::news::default_sources() {
-            let _ = st.add_news_source(&id, &url, trust);
+    let db_path = state.db_path.clone();
+    {
+        let e = state.engine.lock().unwrap();
+        let st = e.storage();
+        if st.list_news_sources().unwrap_or_default().is_empty() {
+            for (id, url, trust) in worldsim_engine::news::default_sources() {
+                let _ = st.add_news_source(&id, &url, trust);
+            }
         }
     }
-    let added = worldsim_engine::news::fetch_all(st).unwrap_or(0);
-    Ok(serde_json::json!({ "added": added }))
+    // Fetch feeds on a background thread so the UI thread is never blocked
+    // on up to ~80s of network work (the blocking reqwest client would
+    // otherwise freeze the desktop app).
+    std::thread::spawn(move || {
+        if let Ok(storage) = worldsim_engine::storage::Storage::open(&db_path) {
+            let _ = worldsim_engine::news::fetch_all(&storage);
+        }
+    });
+    Ok(serde_json::json!({ "started": true }))
 }
 
 #[tauri::command]
