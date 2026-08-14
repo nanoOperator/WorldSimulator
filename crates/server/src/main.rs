@@ -273,16 +273,12 @@ async fn simulate(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let target = date_from_iso(&req.target_date)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("bad date '{}'", req.target_date)))?;
-    // Snapshot the paths, then run outside the lock.
-    let db_path = st.db_path.clone();
-    let models_dir = st.models_dir.clone();
-    let bin_dir = st.bin_dir.clone();
-    let engine = st.engine.lock().unwrap();
-    let scenario = engine
+    let engine_guard = st.engine.lock().unwrap();
+    let scenario = engine_guard
         .get_scenario(&req.scenario_id)
         .map_err(err500)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "scenario not found".into()))?;
-    drop(engine);
+    drop(engine_guard);
 
     let options = worldsim_engine::SimulationOptions {
         target_date: target,
@@ -304,6 +300,10 @@ async fn simulate(
         done: 0,
         total,
     };
+    // Reuse the shared Engine (and its warm LlamaClient) from AppState.
+    // Do NOT call Engine::open() here — that would discard the managed
+    // llama-server map and force a cold server restart every simulation.
+    let shared_engine = st.engine.clone();
     std::thread::spawn(move || -> std::result::Result<(), String> {
         let cb_status = status.clone();
         let cb = std::sync::Arc::new(move |p: worldsim_engine::SimProgress| {
@@ -323,8 +323,9 @@ async fn simulate(
                 s.log.remove(0);
             }
         });
-        let engine = Engine::open(&db_path, &models_dir, &bin_dir).map_err(|e| e.to_string())?;
+        let engine = shared_engine.lock().map_err(|e| e.to_string())?;
         let res = engine.run_scenario(&scenario_id, options, Some(cb));
+        drop(engine);
         let mut s = status.lock().unwrap();
         match res {
             Ok(_branches) => {

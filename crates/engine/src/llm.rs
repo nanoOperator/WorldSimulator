@@ -286,32 +286,43 @@ impl LlamaClient {
         max_tokens: usize,
     ) -> Result<Option<LlmResult>> {
         // 1. Try managed llama-server (or external server) over HTTP.
+        //    If that fails, surface the error immediately — do NOT fall through
+        //    to the CLI path. llama-cli b10405 hangs indefinitely in chat mode
+        //    when the GGUF has a chat template, even with --no-conversation.
         match self.ensure_server(spec) {
             Ok(Some(url)) => {
                 match self.generate_http(&url, spec, system, prompt, temp, seed, max_tokens) {
                     Ok(r) => return Ok(Some(r)),
                     Err(e) => {
-                        log::warn!(
-                            "llama-server HTTP failed for {}: {e}; trying CLI fallback",
-                            spec.id
-                        );
+                        // Remove stale server so next call respawns it.
                         if let Ok(mut servers) = self.managed_servers.lock() {
                             servers.remove(spec.id);
                         }
+                        return Err(EngineError::Llm(format!(
+                            "llama-server HTTP error for {}: {e}",
+                            spec.id
+                        )));
                     }
                 }
             }
-            Ok(None) => {}
-            Err(e) => {
+            Ok(None) => {
+                // No server binary available — try CLI as genuine last resort.
                 log::warn!(
-                    "ensure_server failed for {}: {e}; falling back to CLI",
+                    "no llama-server binary for {}; trying CLI (may hang)",
                     spec.id
                 );
+                return self.generate_cli(spec, system, prompt, temp, seed, max_tokens);
+            }
+            Err(e) => {
+                return Err(EngineError::Llm(format!(
+                    "ensure_server failed for {}: {e}",
+                    spec.id
+                )));
             }
         }
 
-        // 2. CLI subprocess fallback.
-        self.generate_cli(spec, system, prompt, temp, seed, max_tokens)
+        #[allow(unreachable_code)]
+        Ok(None)
     }
 
     fn generate_http(
