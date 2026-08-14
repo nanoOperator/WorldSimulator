@@ -169,6 +169,21 @@ textarea { resize: vertical; min-height: 64px; }
 .progress-pct { font-size: 12px; font-weight: 700; color: var(--accent); }
 .progress-tools { display: flex; align-items: center; gap: 8px; }
 button.mini { padding: 2px 8px; font-size: 11px; }
+.map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  text-align: center;
+  padding: 0 24px;
+}
+.map-empty-title { font-size: 16px; font-weight: 600; color: var(--text); }
+.map-empty-text { font-size: 12px; color: var(--muted); max-width: 280px; }
+.map-empty button { pointer-events: auto; }
 .progress .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .progress .bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
 .progress .msg { color: var(--text); font-size: 12px; margin-top: 6px; }

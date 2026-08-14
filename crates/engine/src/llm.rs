@@ -41,6 +41,26 @@ impl LlamaClient {
         }
     }
 
+    /// The directory containing llama-cli's shared libraries.
+    fn lib_dir(&self) -> PathBuf {
+        self.binary_dir.join("llama-b10405")
+    }
+
+    /// Quick check that the binary can actually start (dylibs present).
+    fn binary_runs(&self, binary: &std::path::Path) -> bool {
+        let lib_dir = self.lib_dir();
+        let mut cmd = Command::new(binary);
+        if lib_dir.is_dir() {
+            cmd.env("DYLD_LIBRARY_PATH", lib_dir);
+        }
+        let result = cmd
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        matches!(result, Ok(s) if s.success())
+    }
+
     /// Whether at least one backend + model set is usable.
     pub fn available(&self, spec: &ModelSpec) -> bool {
         if self.server_url.is_some() && !self.server_failed.load(Ordering::SeqCst) {
@@ -153,24 +173,52 @@ impl LlamaClient {
         let Some(binary) = self.find_binary("llama-cli") else {
             return Ok(None);
         };
+
+        // Verify the binary is actually runnable (dylibs present, etc.).
+        if !self.binary_runs(&binary) {
+            return Ok(None);
+        }
+
         let full = format!("{system}\n\nUSER:\n{prompt}\nASSISTANT:");
         let started = std::time::Instant::now();
-        let out = Command::new(binary)
-            .arg("-m")
-            .arg(&model_path)
-            .arg("-p")
-            .arg(&full)
-            .arg("-n")
-            .arg(max_tokens.to_string())
-            .arg("--temp")
-            .arg(temp.to_string())
-            .arg("--seed")
-            .arg(seed.to_string())
-            .arg("--no-display-prompt")
-            .arg("--simple-io")
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| EngineError::Llm(e.to_string()))?;
+
+        // Spawn the child and enforce a wall-clock timeout. If it hangs
+        // (e.g. model too large, OOM, or incompatible binary) we kill it and
+        // return Err so run_branch can fall back to deterministic mode.
+        let mut child = {
+            let mut cmd = Command::new(&binary);
+            if self.lib_dir().is_dir() {
+                cmd.env("DYLD_LIBRARY_PATH", self.lib_dir());
+            }
+            cmd.arg("-m")
+                .arg(&model_path)
+                .arg("-p")
+                .arg(&full)
+                .arg("-n")
+                .arg(max_tokens.to_string())
+                .arg("--temp")
+                .arg(temp.to_string())
+                .arg("--seed")
+                .arg(seed.to_string())
+                .arg("--no-display-prompt")
+                .arg("--simple-io")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| EngineError::Llm(e.to_string()))?
+        };
+
+        let timeout = std::time::Duration::from_secs(180);
+        let out = match wait_or_kill(&mut child, timeout) {
+            Some(res) => res.map_err(|e| EngineError::Llm(e.to_string()))?,
+            None => {
+                return Err(EngineError::Llm(format!(
+                    "llama-cli timed out after {timeout:?}"
+                )));
+            }
+        };
+
         if !out.status.success() {
             return Err(EngineError::Llm(
                 String::from_utf8_lossy(&out.stderr).to_string(),
@@ -185,7 +233,40 @@ impl LlamaClient {
     }
 }
 
-/// Role of a job, used for routing.
+/// Wait for a child process to finish, or kill it after `timeout` and return None.
+fn wait_or_kill(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> Option<std::io::Result<std::process::Output>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+                use std::io::Read;
+                let mut out = Vec::new();
+                let mut err = Vec::new();
+                if let Some(mut s) = stdout {
+                    let _ = s.read_to_end(&mut out);
+                }
+                if let Some(mut e) = stderr {
+                    let _ = e.read_to_end(&mut err);
+                }
+                return Some(Ok(std::process::Output { status, stdout: out, stderr: err }));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => return Some(Err(e)),
+        }
+    }
+}
+
 pub fn role_of(spec: &ModelSpec) -> ModelRole {
     spec.role
 }

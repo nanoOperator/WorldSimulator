@@ -42,7 +42,7 @@ const MAP_STYLE = {
   ],
 };
 
-export default function WorldMap({ geojson, selected, onSelect }) {
+export default function WorldMap({ geojson, selected, onSelect, onJumpToFirst }) {
   const mapRef = useRef(null);
 
   const layer = useMemo(() => {
@@ -74,20 +74,34 @@ export default function WorldMap({ geojson, selected, onSelect }) {
     if (mapRef.current) mapRef.current.resize();
   }, []);
 
+  const empty = !geojson || !geojson.features || geojson.features.length === 0;
+
   return (
-    <DeckGL
-      initialViewState={{ longitude: 10, latitude: 30, zoom: 1.3, pitch: 45, bearing: 0 }}
-      controller={true}
-      layers={layer ? [layer] : []}
-      style={{ position: "absolute", inset: 0 }}
-    >
-      <Map
-        ref={mapRef}
-        mapStyle={MAP_STYLE}
-        attributionControl={false}
-        terrain={{ source: "dem", exaggeration: 0.25 }}
-      />
-    </DeckGL>
+    <div style={{ position: "absolute", inset: 0 }}>
+      <DeckGL
+        initialViewState={{ longitude: 10, latitude: 30, zoom: 1.3, pitch: 45, bearing: 0 }}
+        controller={true}
+        layers={layer ? [layer] : []}
+        style={{ position: "absolute", inset: 0 }}
+      >
+        <Map
+          ref={mapRef}
+          mapStyle={MAP_STYLE}
+          attributionControl={false}
+          terrain={{ source: "dem", exaggeration: 0.25 }}
+        />
+      </DeckGL>
+      {empty && onJumpToFirst && (
+        <div className="map-empty">
+          <div className="map-empty-title">No nations yet</div>
+          <div className="map-empty-text">
+            Human civilizations appear around 3200 BCE. Move the timeline forward to see the world
+            take shape.
+          </div>
+          <button onClick={onJumpToFirst}>Jump to 3200 BCE</button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -420,6 +420,16 @@ impl Storage {
         Ok(())
     }
 
+    pub fn branch_count(&self, scenario_id: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM branches WHERE scenario_id=?1",
+                params![scenario_id],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     // -------------------------------------------------------- scenario events
 
     /// Insert a scenario event, enforcing the hard divergence lock: the event
@@ -542,6 +552,28 @@ impl Storage {
             )
             .optional()?;
         Ok(v.unwrap_or(0))
+    }
+
+    /// Number of scenario events on a branch plus the latest event date.
+    pub fn branch_event_stats(
+        &self,
+        scenario_id: &str,
+        branch_id: &str,
+    ) -> Result<(i64, Option<SimDate>)> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*), MAX(date_day) FROM scenario_events
+                 WHERE scenario_id=?1 AND branch_id=?2",
+                params![scenario_id, branch_id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            Some((count, Some(day))) => (count, Some(SimDate::from_days(day))),
+            Some((count, None)) => (count, None),
+            None => (0, None),
+        })
     }
 
     // ------------------------------------------------------------------ news

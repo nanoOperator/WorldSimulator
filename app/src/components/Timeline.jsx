@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const TRACK_MIN = -2000000;
 const TRACK_MAX = 2100;
 
-// Piecewise scale: history is mapped to the track in zones so that recent,
-// simulation-relevant history gets a readable share instead of being crushed
-// into a sliver by a single log over 2 million years.
-const ZONES = [
-  { min: -2000000, max: -50000, to: 0.12 }, // deep prehistory
-  { min: -50000, max: -3000, to: 0.24 }, // later prehistory (sapiens → neolithic)
-  { min: -3000, max: 1, to: 0.40 }, // ancient (writing → Rome)
-  { min: 1, max: 1500, to: 0.62 }, // classical → medieval
-  { min: 1500, max: 2100, to: 1.0 }, // modern + future
-];
+function makeZones(maxYear) {
+  return [
+    { min: -2000000, max: -50000, to: 0.12 }, // deep prehistory
+    { min: -50000, max: -3000, to: 0.24 }, // later prehistory (sapiens → neolithic)
+    { min: -3000, max: 1, to: 0.40 }, // ancient (writing → Rome)
+    { min: 1, max: 1500, to: 0.62 }, // classical → medieval
+    { min: 1500, max: Math.max(maxYear, 1500), to: 1.0 }, // modern + future
+  ];
+}
 
-function fracForYear(y) {
-  const clamped = Math.max(TRACK_MIN, Math.min(TRACK_MAX, y));
+function fracForYear(y, zones, maxYear) {
+  const clamped = Math.max(TRACK_MIN, Math.min(maxYear, y));
   let prevTo = 0;
-  for (const z of ZONES) {
+  for (const z of zones) {
     if (clamped <= z.max) {
       const span = z.max - z.min;
       const t = span === 0 ? 0 : (clamped - z.min) / span;
@@ -28,10 +27,10 @@ function fracForYear(y) {
   return 1.0;
 }
 
-function yearForFrac(t) {
+function yearForFrac(t, zones, maxYear) {
   const f = Math.max(0, Math.min(1, t));
   let prevTo = 0;
-  for (const z of ZONES) {
+  for (const z of zones) {
     if (f <= z.to) {
       const span = z.to - prevTo;
       const inner = span === 0 ? 0 : (f - prevTo) / span;
@@ -39,10 +38,11 @@ function yearForFrac(t) {
     }
     prevTo = z.to;
   }
-  return TRACK_MAX;
+  return maxYear;
 }
 
-export default function Timeline({ eras, currentYear, onSeek }) {
+export default function Timeline({ eras, currentYear, onSeek, maxYear = TRACK_MAX }) {
+  const zones = useMemo(() => makeZones(maxYear), [maxYear]);
   const trackRef = useRef(null);
   const dragging = useRef(false);
   const suppressClick = useRef(false);
@@ -50,27 +50,25 @@ export default function Timeline({ eras, currentYear, onSeek }) {
   const lastYearRef = useRef(currentYear);
   const [viewYear, setViewYear] = useState(currentYear);
 
-  // Follow external changes (scenario switch, seek from elsewhere).
   useEffect(() => {
     if (!dragging.current) setViewYear(currentYear);
   }, [currentYear]);
 
   useEffect(() => () => clearTimeout(debounceRef.current), []);
 
-  // Wheel / trackpad scrolling over the track travels through history.
+  const onWheel = (e) => {
+    e.preventDefault();
+    const cur = lastYearRef.current == null ? maxYear : lastYearRef.current;
+    const step = Math.max(1, Math.abs(e.deltaY) / 100);
+    const dir = e.deltaY > 0 ? 1 : -1;
+    const scale = yearForFrac(fracForYear(cur, zones, maxYear) + 0.02, zones, maxYear) - yearForFrac(fracForYear(cur, zones, maxYear) - 0.02, zones, maxYear);
+    const target = cur + dir * Math.max(step, scale * step * 2);
+    seek(Math.round(target));
+  };
+
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
-    const onWheel = (e) => {
-      e.preventDefault();
-      const cur = lastYearRef.current == null ? TRACK_MAX : lastYearRef.current;
-      const step = Math.max(1, Math.abs(e.deltaY) / 100);
-      const dir = e.deltaY > 0 ? 1 : -1;
-      // Constant ~1 year per "notch", scaled across the piecewise zones.
-      const scale = yearForFrac(fracForYear(cur) + 0.02) - yearForFrac(fracForYear(cur) - 0.02);
-      const target = cur + dir * Math.max(step, scale * step * 2);
-      seek(Math.round(target));
-    };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   });
@@ -85,7 +83,6 @@ export default function Timeline({ eras, currentYear, onSeek }) {
     [onSeek]
   );
 
-  // Flush the pending debounced seek (drag/keyboard end, marker click).
   const flush = useCallback(() => {
     clearTimeout(debounceRef.current);
     if (onSeek) onSeek(lastYearRef.current);
@@ -98,9 +95,9 @@ export default function Timeline({ eras, currentYear, onSeek }) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0) return;
       const t = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      seek(yearForFrac(t));
+      seek(yearForFrac(t, zones, maxYear));
     },
-    [seek]
+    [seek, zones, maxYear]
   );
 
   const onPointerDown = (e) => {
@@ -123,12 +120,12 @@ export default function Timeline({ eras, currentYear, onSeek }) {
   };
 
   const onKeyDown = (e) => {
-    const cur = viewYear == null ? TRACK_MAX : viewYear;
+    const cur = viewYear == null ? maxYear : viewYear;
     let next = null;
-    if (e.key === "ArrowRight" || e.key === "PageDown") next = yearForFrac(fracForYear(cur) + (e.key === "ArrowRight" ? 0.01 : 0.1));
-    else if (e.key === "ArrowLeft" || e.key === "PageUp") next = yearForFrac(fracForYear(cur) - (e.key === "ArrowLeft" ? 0.01 : 0.1));
+    if (e.key === "ArrowRight" || e.key === "PageDown") next = yearForFrac(fracForYear(cur, zones, maxYear) + (e.key === "ArrowRight" ? 0.01 : 0.1), zones, maxYear);
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") next = yearForFrac(fracForYear(cur, zones, maxYear) - (e.key === "ArrowLeft" ? 0.01 : 0.1), zones, maxYear);
     else if (e.key === "Home") next = TRACK_MIN;
-    else if (e.key === "End") next = TRACK_MAX;
+    else if (e.key === "End") next = maxYear;
     if (next == null) return;
     e.preventDefault();
     seek(next);
@@ -137,17 +134,16 @@ export default function Timeline({ eras, currentYear, onSeek }) {
 
   const onEraJump = (e) => {
     const val = e.target.value;
-    if (val === "today") seek(2020);
+    if (val === "today") seek(maxYear);
     else if (val) seek(Number(val));
     flush();
   };
 
-  const shown = viewYear == null ? TRACK_MAX : viewYear;
-  const handleFrac = fracForYear(shown);
+  const shown = viewYear == null ? maxYear : viewYear;
+  const handleFrac = fracForYear(shown, zones, maxYear);
 
-  // Greedy label placement: drop labels that would collide with an earlier one.
   const placed = [];
-  const markers = eras.map((e) => ({ e, left: fracForYear(e.year) }));
+  const markers = eras.map((e) => ({ e, left: fracForYear(e.year, zones, maxYear) }));
   for (const m of markers) {
     m.showLabel = placed.every((p) => Math.abs(m.left - p) >= 0.024);
     if (m.showLabel) placed.push(m.left);
@@ -161,7 +157,7 @@ export default function Timeline({ eras, currentYear, onSeek }) {
         <span className="tl-hint">drag, scroll, or use keys</span>
         <select className="tl-jump" value="" onChange={onEraJump} title="Jump to an era">
           <option value="" disabled>Jump to era…</option>
-          <option value="today">Today (2020)</option>
+          <option value="today">Today ({fmtYear(maxYear)})</option>
           {eras.map((e) => (
             <option key={e.label} value={e.year}>≈ {fmtYear(e.year)} — {e.label}</option>
           ))}
@@ -174,7 +170,7 @@ export default function Timeline({ eras, currentYear, onSeek }) {
         role="slider"
         aria-label="Timeline"
         aria-valuemin={TRACK_MIN}
-        aria-valuemax={TRACK_MAX}
+        aria-valuemax={maxYear}
         aria-valuenow={shown}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

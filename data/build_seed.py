@@ -312,6 +312,54 @@ ERAS = {
         "AUT": ["AUT"],
         "UKR": ["UKR"],
     },
+    "01995_CE": {
+        "RUS": ["RUS", "EST", "LVA", "LTU"],
+        "UKR": ["UKR"],
+        "BLR": ["BLR"],
+        "KAZ": ["KAZ"],
+        "UZB": ["UZB"],
+        "TKM": ["TKM"],
+        "KGZ": ["KGZ"],
+        "TJK": ["TJK"],
+        "AZE": ["AZE"],
+        "ARM": ["ARM"],
+        "GEO": ["GEO"],
+        "MDA": ["MDA"],
+        "CHN": ["CHN", "MNG"],
+        "GBR": ["GBR", "IRL", "CAN", "AUS", "NZL", "HKG"],
+        "FRA": ["FRA"],
+        "GER": ["DEU"],
+        "JPN": ["JPN"],
+        "ITA": ["ITA"],
+        "IND": ["IND", "PAK", "BGD"],
+        "BRA": ["BRA"],
+        "MEX": ["MEX"],
+        "ARG": ["ARG"],
+        "SAU": ["SAU", "YEM", "OMN"],
+        "IRN": ["IRN"],
+        "TUR": ["TUR"],
+        "EGY": ["EGY"],
+        "ISR": ["ISR"],
+        "ZAF": ["ZAF"],
+        "YUG": ["SRB", "BIH", "MKD", "MNE", "HRV", "SVN"],
+        "NGA": ["NGA"],
+        "POL": ["POL"],
+        "CZE": ["CZE", "SVK"],
+        "HUN": ["HUN"],
+        "ROU": ["ROU"],
+        "BGR": ["BGR"],
+        "GRC": ["GRC"],
+        "ESP": ["ESP"],
+        "PRT": ["PRT"],
+        "NLD": ["NLD"],
+        "BEL": ["BEL"],
+        "SWE": ["SWE"],
+        "NOR": ["NOR"],
+        "FIN": ["FIN"],
+        "DNK": ["DNK"],
+        "SUI": ["CHE"],
+        "AUT": ["AUT"],
+    },
 }
 
 # Modern 2020 baseline uses each country as its own nation (accurate).
@@ -715,12 +763,17 @@ def baseline_payload(nations, territories, techs):
 
 def techs_payload(era_key, date):
     out = []
+    is_bce = "BCE" in era_key
     for name, cat, year, adoption in ERA_TECHS.get(era_key, []):
+        # ERA_TECHS years for BCE eras are positive magnitudes (3200 = 3200 BCE).
+        # Convert to astronomical years (3200 BCE -> -3199) so sorting/display
+        # match the era baseline dates used elsewhere.
+        astro = -(year - 1) if is_bce else year
         out.append({
             "tech_id": name.lower().replace(" ", "_"),
             "name": name,
             "category": cat,
-            "invented": {"year": year, "month": 1, "day": 1},
+            "invented": {"year": astro, "month": 1, "day": 1},
             "adoption": adoption,
         })
     return out
@@ -737,6 +790,143 @@ def color_hash(owner):
     for ch in owner:
         h = ((h * 33) + ord(ch)) & 0xFFFFFFFF
     return pal[h % len(pal)]
+
+
+# ---------------------------------------------------------------------------
+# Owner code -> full display name. No 3-letter codes in the UI.
+# ---------------------------------------------------------------------------
+
+OWNER_NAMES = {
+    "SUM": "Sumer",
+    "EGY": "Ancient Egypt",
+    "XIA": "Xia Dynasty",
+    "HIT": "Hittite Empire",
+    "BAB": "Babylon",
+    "SHA": "Shang Dynasty",
+    "CRT": "Minoan Crete",
+    "IVA": "Indus Valley Civilization",
+    "ACH": "Achaemenid Persian Empire",
+    "ATH": "Athens",
+    "SPT": "Sparta",
+    "ZHOU": "Zhou Dynasty",
+    "ROM": "Roman Empire",
+    "PAR": "Parthian Empire",
+    "KUS": "Kushan Empire",
+    "HAN": "Han Dynasty",
+    "NAB": "Nabataean Kingdom",
+    "BYZ": "Byzantine Empire",
+    "SAS": "Sasanian Empire",
+    "GUPTA": "Gupta Empire",
+    "SUI": "Sui Dynasty",
+    "FRA": "France",
+    "VIS": "Visigothic Kingdom",
+    "OST": "Ostrogothic Kingdom",
+    "ANG": "Anglo-Saxon Kingdoms",
+    "AKS": "Kingdom of Aksum",
+    "GHA": "Ghana Empire",
+    "FAT": "Fatimid Caliphate",
+    "UMM": "Umayyad Caliphate",
+    "HRF": "Holy Roman Empire",
+    "KIE": "Kievan Rus'",
+    "SUG": "Song Dynasty",
+    "SEL": "Seljuk Empire",
+    "MGL": "Mongol Empire",
+    "MAM": "Mamluk Sultanate",
+    "OTT": "Ottoman Empire",
+    "ENG": "England",
+    "CAST": "Crown of Castile",
+    "PAP": "Papal States",
+    "MAL": "Mali Empire",
+    "DEL": "Delhi Sultanate",
+    "ILS": "Ilkhanate",
+    "MNG": "Ming Dynasty",
+    "MUG": "Mughal Empire",
+    "SPA": "Spanish Empire",
+    "DUT": "Dutch Empire",
+    "FRN": "French Empire",
+    "USA": "United States",
+    "USA2": "United States",
+    "GBR": "United Kingdom",
+    "GER": "German Empire",
+    "JPN": "Japan",
+    "ITA": "Italy",
+    "BRA": "Brazil",
+    "MEX": "Mexico",
+    "ARG": "Argentina",
+    "PER": "Persia",
+    "SAF": "Safavid Empire",
+    "AZT": "Aztec Empire",
+    "INC": "Inca Empire",
+    "USSR": "Soviet Union",
+    "SWE": "Sweden",
+    "NOR": "Norway",
+    "FIN": "Finland",
+    "DNK": "Denmark",
+    "RUS": "Russia",
+    "UKR": "Ukraine",
+    "BLR": "Belarus",
+    "KAZ": "Kazakhstan",
+    "UZB": "Uzbekistan",
+    "TKM": "Turkmenistan",
+    "KGZ": "Kyrgyzstan",
+    "TJK": "Tajikistan",
+    "AZE": "Azerbaijan",
+    "ARM": "Armenia",
+    "GEO": "Georgia",
+    "MDA": "Moldova",
+    "POL": "Poland",
+    "CZE": "Czechoslovakia",
+    "HUN": "Hungary",
+    "ROU": "Romania",
+    "BGR": "Bulgaria",
+    "GRC": "Greece",
+    "ESP": "Spain",
+    "PRT": "Portugal",
+    "NLD": "Netherlands",
+    "BEL": "Belgium",
+    "SUI": "Switzerland",
+    "AUT": "Austria",
+    "ISR": "Israel",
+    "ZAF": "South Africa",
+    "NGA": "Nigeria",
+    "THA": "Thailand",
+    "KOR": "South Korea",
+    "CHN": "China",
+    "QIN": "Qing Dynasty",
+    "ETH": "Ethiopia",
+    # Region fallbacks for unmapped territory.
+    "AFR": "African peoples",
+    "AME": "American peoples",
+    "ASI": "Asian peoples",
+    "EUR": "European peoples",
+    "OCE": "Oceanic peoples",
+    "MAU2": "Maurya Empire",
+    "AUS": "Austria-Hungary",
+    "DUT": "Dutch Empire",
+    "FRN_NEW": "New France",
+    "FRA_NEW": "New France",
+    "USA2": "United States",
+}
+
+# Era-specific overrides where a code's meaning changes across periods.
+OWNER_NAMES_BY_ERA = {
+    "03200_BCE": {"IND": "Indus Valley Civilization"},
+    "00001_CE": {"ROM": "Roman Empire", "MAU": "Carthage"},
+    "00500_CE": {"SUI": "Sui Dynasty"},
+    "00500_BCE": {"MAU": "Carthage"},
+    "01500_CE": {"FRN": "French Empire"},
+    "01700_CE": {"FRN": "French Empire"},
+    "01800_CE": {"FRN": "French Empire", "PER": "Qajar Persia", "DUT": "Dutch Empire"},
+    "01900_CE": {"GER": "German Empire", "USA2": "United States", "PER": "Peru"},
+    "01938_CE": {"GER": "Nazi Germany", "ROM": "Romania", "SUI": "Switzerland"},
+    "01945_CE": {"GER": "Germany", "SUI": "Switzerland", "AUS": "Australia"},
+    "01991_CE": {"IND": "India", "SUI": "Switzerland", "GER": "Germany"},
+    "01995_CE": {"IND": "India", "SUI": "Switzerland", "GER": "Germany"},
+}
+
+def owner_name(era_key, owner):
+    overrides = OWNER_NAMES_BY_ERA.get(era_key, {})
+    return overrides.get(owner, OWNER_NAMES.get(owner, owner))
 
 
 def make_baseline(era_key, date, owner_map):
@@ -756,7 +946,7 @@ def make_baseline(era_key, date, owner_map):
         if owner not in nations:
             nations[owner] = {
                 "id": owner,
-                "name": owner,
+                "name": owner_name(era_key, owner),
                 "color": color_hash(owner),
                 "population": int(HIST_POP.get(owner, 1) * 1_000_000),
                 "religion_pct": era_religion.get(owner, [["Traditional/Unspecified", 100.0]]),
@@ -1134,7 +1324,8 @@ def build():
         "01938_CE": (1938, 1, 1),
         "01945_CE": (1945, 1, 1),
         "01991_CE": (1991, 1, 1),
-    }
+    "01995_CE": (1995, 1, 1),
+}
     era_dates.pop("02020_CE", None)
 
     for era_key, date_tuple in era_dates.items():
@@ -1165,7 +1356,7 @@ def build():
         "VALUES (?,?,?,?,?,?,?,?,?)",
         events,
     )
-    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.2.0-expanded')")
+    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.2.1-fixes')")
     conn.commit()
     conn.close()
 

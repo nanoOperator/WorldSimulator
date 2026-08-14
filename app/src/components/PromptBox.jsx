@@ -8,10 +8,18 @@ export default function PromptBox({ value, onChange, onSimulate, busy, scenarios
         onChange={(e) => onChange(e.target.value)}
       />
       <div className="row" style={{ marginTop: 8 }}>
-        <select defaultValue="" onChange={(e) => e.target.value && onCreate(e.target.value)}>
+        <select defaultValue="" onChange={(e) => {
+          if (!e.target.value) return;
+          const sid = e.target.value;
+          const sc = scenarios.find((s) => s.id === sid);
+          if (sc) {
+            e.target.value = "";
+            onCreate(sc);
+          }
+        }}>
           <option value="">+ New scenario from prompt…</option>
           {scenarios.map((s) => (
-            <option key={s.id} value={s.id}>{s.title}</option>
+            <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
       </div>

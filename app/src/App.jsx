@@ -57,6 +57,7 @@ export default function App() {
   const [snapshot, setSnapshot] = useState(null);
   const [worldDate, setWorldDate] = useState(null);
   const [comparison, setComparison] = useState(null);
+  const [timelineMax, setTimelineMax] = useState(2026);
   const [progress, setProgress] = useState(null);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -182,7 +183,24 @@ export default function App() {
       .catch(() => {});
     api.news().then(setNews).catch(() => {});
   }, []);
-  useEffect(() => { loadWorld(); }, [loadWorld, activeId, activeBranch, worldDate]);
+   useEffect(() => { loadWorld(); }, [loadWorld, activeId, activeBranch, worldDate]);
+
+   // Only extend the timeline past the present if a simulation actually
+   // produced events beyond it. Otherwise the seekable range is capped at today.
+   const refreshTimelineMax = useCallback(async () => {
+     let mx = 2026;
+     try {
+       const events = await api.timeline(activeId || "", activeBranch || "");
+       for (const e of events || []) {
+         const y = e.date?.year;
+         if (y != null && y > mx) mx = y;
+       }
+     } catch {}
+     setTimelineMax(mx);
+   }, [activeId, activeBranch]);
+
+   useEffect(() => { refreshTimelineMax(); }, [refreshTimelineMax]);
+
 
   const pollProgress = useCallback(() => {
     let cancelled = false;
@@ -300,13 +318,18 @@ export default function App() {
           onSimulate={doSimulate}
           busy={busy}
           scenarios={scenarios}
-          onCreate={() => doSimulate()}
+          onCreate={onSelectScenario}
         />
         <BranchTree branches={branches} activeBranch={activeBranch} onSelect={onSelectBranch} />
       </div>
 
       <div className="map">
-        <WorldMap geojson={geojson} selected={activeBranch} onSelect={onSelectTerritory} />
+        <WorldMap
+          geojson={geojson}
+          selected={activeBranch}
+          onSelect={onSelectTerritory}
+          onJumpToFirst={() => onSeek(eras.length ? Math.min(...eras.map((e) => e.year)) : -3200)}
+        />
         <div className="legend">
           {(snapshot?.nations || []).slice(0, 12).map((n) => (
             <div key={n.id}>
@@ -331,7 +354,7 @@ export default function App() {
         </div>
       </div>
 
-      <Timeline eras={eras} currentYear={snapshot?.date?.year || 2020} onSeek={onSeek} />
+      <Timeline eras={eras} currentYear={snapshot?.date?.year || 2026} onSeek={onSeek} maxYear={timelineMax} />
       {setup?.running && (
         <div className="setup-overlay">
           <div className="setup-card">

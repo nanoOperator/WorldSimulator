@@ -87,8 +87,8 @@ async fn main() {
     let app = Router::new()
         .route("/api/status", get(status))
         .route("/api/scenarios", get(list_scenarios).post(create_scenario))
-        .route("/api/scenarios/{id}", post(update_scenario).delete(delete_scenario))
-        .route("/api/scenarios/{id}/branches", get(list_branches))
+        .route("/api/scenarios/:id", post(update_scenario).delete(delete_scenario))
+        .route("/api/scenarios/:id/branches", get(list_branches))
         .route("/api/simulate", post(simulate))
         .route("/api/simulate/status", get(simulate_status))
         .route("/api/world", get(world))
@@ -97,8 +97,8 @@ async fn main() {
         .route("/api/news/refresh", post(news_refresh))
         .route("/api/news", get(list_news))
         .route("/api/news/seed", post(news_seed))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state)
+        .layer(CorsLayer::permissive());
 
     let app = if let Some(dir) = static_dir {
         let dist = tower_http::services::ServeDir::new(&dir);
@@ -162,17 +162,50 @@ async fn create_scenario(
     Ok(Json(sc))
 }
 
-async fn list_scenarios(State(st): State<Arc<AppState>>) -> Result<Json<Vec<Scenario>>, (StatusCode, String)> {
+async fn list_scenarios(State(st): State<Arc<AppState>>) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let engine = st.engine.lock().unwrap();
-    Ok(Json(engine.list_scenarios().map_err(err500)?))
+    let scenarios = engine.list_scenarios().map_err(err500)?;
+    let storage = engine.storage();
+    let mut out = Vec::new();
+    for s in scenarios {
+        let branches = storage.branch_count(&s.id).unwrap_or(0);
+        out.push(serde_json::json!({
+            "id": s.id,
+            "name": s.name,
+            "prompt": s.prompt,
+            "divergence": s.divergence,
+            "created_at": s.created_at,
+            "branches": branches,
+        }));
+    }
+    Ok(Json(out))
 }
 
 async fn list_branches(
     State(st): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Result<Json<Vec<worldsim_engine::storage::Branch>>, (StatusCode, String)> {
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let engine = st.engine.lock().unwrap();
-    Ok(Json(engine.list_branches(&id).map_err(err500)?))
+    let branches = engine.list_branches(&id).map_err(err500)?;
+    let storage = engine.storage();
+    let mut out = Vec::new();
+    for (i, b) in branches.iter().enumerate() {
+        let (event_count, final_date) = storage
+            .branch_event_stats(&id, &b.id)
+            .map_err(err500)?;
+        out.push(serde_json::json!({
+            "id": b.id,
+            "scenario_id": b.scenario_id,
+            "parent_id": b.parent_id,
+            "seed": b.seed,
+            "status": b.status,
+            "created_at": b.created_at,
+            "label": format!("Branch {}", i + 1),
+            "event_count": event_count,
+            "final_date": final_date.map(|d| d.display_year()),
+        }));
+    }
+    Ok(Json(out))
 }
 
 #[derive(Deserialize)]

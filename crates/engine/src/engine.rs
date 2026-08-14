@@ -258,11 +258,14 @@ pub fn run_branch(
         return Ok(n);
     }
 
-    storage.set_branch_status(&branch.id, "running")?;
-    let mut step = 0u32;
-    let mut created = 0usize;
-    let mut date = scenario.divergence;
-    let mut last_ids: Vec<i64> = Vec::new();
+    // Try the LLM path; if the model is broken/unavailable, fall back to the
+    // deterministic simulator so the user always gets scenario-driven events.
+    let llm_res = (|| -> Result<usize> {
+        storage.set_branch_status(&branch.id, "running")?;
+        let mut step = 0u32;
+        let mut created = 0usize;
+        let mut date = scenario.divergence;
+        let mut last_ids: Vec<i64> = Vec::new();
 
     // One-time RAG context (ortayli) over nearby canonical history.
     let rag_context = historical_context(llm, storage, scenario, options)?;
@@ -397,6 +400,44 @@ pub fn run_branch(
         });
     }
     Ok(created)
+    })();
+
+    match llm_res {
+        Ok(n) => Ok(n),
+        Err(e) => {
+            log::warn!(
+                "LLM simulation failed for branch {}: {}; falling back to deterministic",
+                branch.id,
+                e
+            );
+            let cfg = FallbackConfig {
+                branch_seed: branch.seed as u64,
+                target_date: options.target_date,
+                base_step_years: 1.0,
+            };
+            storage.set_branch_status(&branch.id, "running")?;
+            let n = fallback::run_fallback(
+                storage,
+                &scenario.id,
+                &branch.id,
+                &scenario.prompt,
+                cfg,
+            )?;
+            if let Some(cb) = progress {
+                cb(SimProgress {
+                    scenario_id: scenario.id.clone(),
+                    branch_id: branch.id.clone(),
+                    date: options.target_date,
+                    step: 0,
+                    events_created: n,
+                    source: "fallback".into(),
+                    phase: "done".into(),
+                    note: format!("LLM path failed ({e}); deterministic fallback complete"),
+                });
+            }
+            Ok(n)
+        }
+    }
 }
 
 /// Adaptive step: fine near divergence (0.5y), coarse in the far future.
@@ -472,7 +513,9 @@ fn plan_step(
             let events = parse_event_array(&r.text)?;
             Ok((events, "mustafakemal".into()))
         }
-        None => Ok((vec![], "mustafakemal".into())),
+        None => Err(EngineError::Storage(
+            "LLM returned no output; the model binary may be broken or missing a runtime library".into(),
+        )),
     }
 }
 
@@ -624,22 +667,22 @@ pub fn date_from_iso(s: &str) -> Option<SimDate> {
         let year = n.parse::<i32>().ok()?;
         return Some(SimDate::from_ce(year, 1, 1));
     }
-    let parts: Vec<&str> = s.split(['-', '/']).collect();
+    // Allow an optional leading '-' for BCE ISO dates like "-3000-01-01".
+    let body = s.strip_prefix('-').unwrap_or(s);
+    let parts: Vec<&str> = body.split(['-', '/']).collect();
+    let negative = s.starts_with('-');
+    let y: i32 = parts[0].parse::<i32>().ok()?;
+    let year = if negative { -y } else { y };
     match parts.len() {
-        1 => {
-            let y = parts[0].parse::<i32>().ok()?;
-            Some(SimDate::from_ce(y, 1, 1))
-        }
+        1 => Some(SimDate::from_ce(year, 1, 1)),
         2 => {
-            let y = parts[0].parse::<i32>().ok()?;
             let m = parts[1].parse::<u8>().ok()?;
-            Some(SimDate::from_ce(y, m, 1))
+            Some(SimDate::from_ce(year, m, 1))
         }
         _ => {
-            let y = parts[0].parse::<i32>().ok()?;
             let m = parts[1].parse::<u8>().ok()?;
             let d = parts[2].parse::<u8>().ok()?;
-            Some(SimDate::from_ce(y, m, d))
+            Some(SimDate::from_ce(year, m, d))
         }
     }
 }
@@ -775,3 +818,62 @@ before the divergence point. You output structured JSON only.";
 const SYSTEM_INALCIK: &str = "You are Inalcik, the data model of WorldSimulator. You produce \
 realistic, internally consistent statistics: populations, migrations, economy and \
 military indices, technology adoption curves. You only touch numeric fields.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_from_iso_handles_negative_and_bce() {
+        let neg = date_from_iso("-3000-01-01").expect("negative iso parses");
+        assert_eq!(neg.year, -3000);
+        let bce = date_from_iso("BCE 3200").expect("bce parses");
+        assert_eq!(bce.year, -3199);
+        let ce = date_from_iso("2011-06-15").expect("ce parses");
+        assert_eq!(ce.year, 2011);
+        assert_eq!(ce.month, 6);
+        assert_eq!(ce.day, 15);
+        let bare = date_from_iso("1995").expect("bare year parses");
+        assert_eq!(bare.year, 1995);
+        assert!(date_from_iso("not-a-date").is_none());
+    }
+
+    #[test]
+    fn branch_event_stats_counts_events() {
+        use crate::events::{EventPayload, HistoryEvent};
+        let s = crate::storage::Storage::open_in_memory().unwrap();
+        s.create_scenario("s1", "n", "p", SimDate::from_ce(1940, 1, 1)).unwrap();
+        s.create_branch(&crate::storage::Branch {
+            id: "b1".into(),
+            scenario_id: "s1".into(),
+            parent_id: None,
+            seed: 1,
+            status: "done".into(),
+            created_at: "now".into(),
+        })
+        .unwrap();
+        let mk = |date: SimDate| HistoryEvent {
+            id: 0,
+            date,
+            scenario_id: Some("s1".into()),
+            title: "t".into(),
+            body: String::new(),
+            payload: EventPayload::Narrative(crate::events::Narrative {
+                text: "x".into(),
+                stats: Default::default(),
+                caused_by: vec![],
+            }),
+            source_model: "test".into(),
+            causal_parents: vec![],
+            seq: 1,
+        };
+        s.add_scenario_event(&mk(SimDate::from_ce(1945, 1, 1)), "b1").unwrap();
+        s.add_scenario_event(&mk(SimDate::from_ce(1950, 1, 1)), "b1").unwrap();
+        let (count, last) = s.branch_event_stats("s1", "b1").unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(last.unwrap().year, 1950);
+        let (count, last) = s.branch_event_stats("s1", "missing").unwrap();
+        assert_eq!(count, 0);
+        assert!(last.is_none());
+    }
+}

@@ -9,7 +9,7 @@ export default function ScenarioPanel({ scenarios, activeId, onSelect, onDelete 
           className={`scenario-item ${s.id === activeId ? "active" : ""}`}
           onClick={() => onSelect(s)}
         >
-          <div className="title">{s.title}</div>
+          <div className="title">{s.name}</div>
           <div className="meta">
             created {s.created_at} · {s.branches ?? 0} branch(es)
           </div>
