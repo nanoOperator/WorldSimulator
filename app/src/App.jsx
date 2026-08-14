@@ -11,6 +11,7 @@ import StatsPanel from "./components/StatsPanel.jsx";
 import SetupPanel from "./components/SetupPanel.jsx";
 import LogsPanel from "./components/LogsPanel.jsx";
 import TechBrowser from "./components/TechBrowser.jsx";
+import { detectDivergenceFromPrompt } from "./utils/divergence.js";
 
 const PALEO_MARKERS = [
   { label: "Fire", year: -1900000, short: "Fire" },
@@ -60,6 +61,7 @@ export default function App() {
   const [mapLoading, setMapLoading] = useState(false);
   const [focusNation, setFocusNation] = useState("");
   const [divergence, setDivergence] = useState(1945);
+  const [isAutoDivergence, setIsAutoDivergence] = useState(true);
   const [timelineMax, setTimelineMax] = useState(2026);
   const [progress, setProgress] = useState(null);
   const [prompt, setPrompt] = useState("");
@@ -209,8 +211,32 @@ export default function App() {
        out.push({ year: y, label: `${fmtYear(y)} — ${e.short || e.label || e.name}` });
      }
      if (!seen.has(1945)) out.push({ year: 1945, label: "1945 CE — WWII end" });
+     if (divergence != null && !seen.has(divergence)) {
+       out.push({ year: divergence, label: `${fmtYear(divergence)} — ${fmtYear(divergence)} (Detected)` });
+     }
      return out.sort((a, b) => a.year - b.year);
-   }, [eras, fmtYear]);
+   }, [eras, fmtYear, divergence]);
+
+   const handlePromptChange = useCallback((newPrompt) => {
+     setPrompt(newPrompt);
+     if (isAutoDivergence) {
+       const detected = detectDivergenceFromPrompt(newPrompt);
+       if (detected != null) {
+         setDivergence(detected);
+       }
+     }
+   }, [isAutoDivergence]);
+
+   const handleDivergenceChange = useCallback((year) => {
+     setIsAutoDivergence(false);
+     setDivergence(year);
+   }, []);
+
+   const handleResetAutoDivergence = useCallback(() => {
+     setIsAutoDivergence(true);
+     const detected = detectDivergenceFromPrompt(prompt) ?? 1945;
+     setDivergence(detected);
+   }, [prompt]);
 
    // Only extend the timeline past the present if a simulation actually
    // produced events beyond it. Otherwise the seekable range is capped at today.
@@ -277,6 +303,7 @@ export default function App() {
     setActiveId(s.id);
     setPrompt(s.prompt || "");
     setFocusNation("");
+    setIsAutoDivergence(false);
     setDivergence(s.divergence?.year ?? 1945);
     setActiveBranch(null);
     setWorldDate(null);
@@ -357,14 +384,16 @@ export default function App() {
         />
         <PromptBox
           value={prompt}
-          onChange={setPrompt}
+          onChange={handlePromptChange}
           onSimulate={doSimulate}
           busy={busy}
           scenarios={scenarios}
           onCreate={onSelectScenario}
           divergence={divergence}
-          onDivergence={setDivergence}
+          onDivergence={handleDivergenceChange}
           divergenceOptions={divergenceOptions}
+          isAutoDivergence={isAutoDivergence}
+          onResetAutoDivergence={handleResetAutoDivergence}
         />
         <BranchTree branches={branches} activeBranch={activeBranch} onSelect={onSelectBranch} />
       </div>

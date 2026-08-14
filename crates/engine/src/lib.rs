@@ -219,5 +219,6 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 
 /// Re-exports for crate consumers (the HTTP server and the desktop shell).
 pub use engine::{date_from_iso, Engine, ModelStatus, SimProgress, SimulationOptions};
+pub use fallback::detect_divergence;
 pub use state::WorldSnapshot;
 pub use storage::Scenario;

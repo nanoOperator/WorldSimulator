@@ -342,6 +342,22 @@ button.mini { padding: 2px 8px; font-size: 11px; }
   white-space: nowrap;
 }
 .divergence-row select { flex: 1; min-width: 0; }
+.auto-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.auto-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  height: 28px;
+  white-space: nowrap;
+}
 
 /* Map date badge ------------------------------------------------------- */
 .map-date {

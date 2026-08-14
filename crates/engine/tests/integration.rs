@@ -55,3 +55,36 @@ fn full_pipeline_with_seed_db() -> Result<(), EngineError> {
     assert!(!snap.nations.is_empty());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires ~/.worldsim/bin and ~/.worldsim/models"]
+fn live_llm_pipeline_with_models() -> Result<(), EngineError> {
+    let home = std::env::var("HOME").expect("HOME");
+    let base = std::path::PathBuf::from(&home).join(".worldsim");
+    let models = base.join("models");
+    let bin = base.join("bin");
+    let db = seed_db_path();
+
+    let engine = Engine::open(&db, &models, &bin)?;
+    let sc = engine.create_scenario(
+        "Live Nazi WWII",
+        "What if the Nazis won WWII?",
+        date_from_iso("1945-05-01").unwrap(),
+    )?;
+    let branches = engine.run_scenario(
+        &sc.id,
+        worldsim_engine::SimulationOptions {
+            branch_count: 1,
+            target_date: date_from_iso("1947-01-01").unwrap(),
+            max_steps: 3,
+            force_fallback: false,
+            ..Default::default()
+        },
+        None,
+    )?;
+    assert_eq!(branches.len(), 1);
+    let (event_count, _) = engine.storage().branch_event_stats(&sc.id, &branches[0].id)?;
+    println!("Live simulation created {} events!", event_count);
+    assert!(event_count > 0);
+    Ok(())
+}

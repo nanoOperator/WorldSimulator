@@ -89,6 +89,108 @@ pub fn analyze_prompt(prompt: &str) -> PromptIntent {
     PromptIntent { combatants, winner, theme }
 }
 
+/// Extract an appropriate divergence date from a scenario prompt.
+pub fn detect_divergence(prompt: &str) -> SimDate {
+    let lower = prompt.to_lowercase();
+
+    // 1. Check multi-token "3200 bce", "44 bc", "1492 ce"
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    for i in 0..tokens.len() {
+        let clean: String = tokens[i].chars().filter(|c| c.is_ascii_digit()).collect();
+        if let Ok(y) = clean.parse::<u32>() {
+            if i + 1 < tokens.len() && (tokens[i + 1].starts_with("bce") || tokens[i + 1].starts_with("bc")) {
+                return SimDate::from_bce(y, 1, 1);
+            }
+            if i + 1 < tokens.len() && (tokens[i + 1].starts_with("ce") || tokens[i + 1].starts_with("ad")) {
+                return SimDate::from_ce(y as i32, 1, 1);
+            }
+        }
+    }
+
+    // 2. Explicit 4-digit CE year in prompt (e.g. 1943, 1914, 1865, 1776, 1492)
+    for token in tokens.iter() {
+        let clean: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
+        if clean.len() == 4 {
+            if let Ok(y) = clean.parse::<i32>() {
+                if (1000..=2100).contains(&y) {
+                    return SimDate::from_ce(y, 1, 1);
+                }
+            }
+        }
+    }
+
+    // 3. Historical themes & events
+    if lower.contains("nazi") || lower.contains("hitler") || lower.contains("wwii") || lower.contains("world war 2") || lower.contains("world war ii") || lower.contains("axis") || lower.contains("holocaust") || lower.contains("stalingrad") {
+        return SimDate::from_ce(1939, 9, 1);
+    }
+    if lower.contains("wwi") || lower.contains("world war 1") || lower.contains("world war i") || lower.contains("franz ferdinand") || lower.contains("sarajevo") {
+        return SimDate::from_ce(1914, 6, 28);
+    }
+    if lower.contains("columbus") || (lower.contains("americas") && lower.contains("never reached")) {
+        return SimDate::from_ce(1492, 10, 12);
+    }
+    if lower.contains("rome never fell") || lower.contains("fall of rome") || lower.contains("fall of the roman empire") {
+        return SimDate::from_ce(476, 9, 4);
+    }
+    if lower.contains("caesar") || lower.contains("julius caesar") || lower.contains("rubicon") {
+        return SimDate::from_bce(44, 3, 15);
+    }
+    if lower.contains("alexander the great") || (lower.contains("alexander") && lower.contains("died")) {
+        return SimDate::from_bce(323, 6, 10);
+    }
+    if lower.contains("constantinople") || lower.contains("byzantine") || lower.contains("1453") {
+        return SimDate::from_ce(1453, 5, 29);
+    }
+    if lower.contains("american revolution") || lower.contains("declaration of independence") || lower.contains("1776") {
+        return SimDate::from_ce(1776, 7, 4);
+    }
+    if lower.contains("civil war") || lower.contains("confederacy") || lower.contains("gettysburg") || lower.contains("lincoln") {
+        return SimDate::from_ce(1861, 4, 12);
+    }
+    if lower.contains("french revolution") || lower.contains("bastille") || lower.contains("guillotine") {
+        return SimDate::from_ce(1789, 7, 14);
+    }
+    if lower.contains("napoleon") || lower.contains("waterloo") || lower.contains("bonaparte") {
+        return SimDate::from_ce(1815, 6, 18);
+    }
+    if lower.contains("cuban missile") || (lower.contains("cold war") && lower.contains("hot")) {
+        return SimDate::from_ce(1962, 10, 16);
+    }
+    if lower.contains("ussr") || lower.contains("soviet union") || lower.contains("berlin wall") {
+        return SimDate::from_ce(1989, 11, 9);
+    }
+    if lower.contains("mongol") || lower.contains("genghis khan") || lower.contains("baghdad") {
+        return SimDate::from_ce(1258, 2, 10);
+    }
+    if lower.contains("black death") || lower.contains("bubonic plague") {
+        return SimDate::from_ce(1347, 10, 1);
+    }
+    if lower.contains("islam") || lower.contains("muhammad") || lower.contains("hijra") || lower.contains("caliphate") {
+        return SimDate::from_ce(622, 9, 24);
+    }
+    if lower.contains("printing press") || lower.contains("gutenberg") {
+        return SimDate::from_ce(1440, 1, 1);
+    }
+    if lower.contains("moon landing") || lower.contains("apollo 11") {
+        return SimDate::from_ce(1969, 7, 20);
+    }
+    if lower.contains("covid") || lower.contains("pandemic") {
+        return SimDate::from_ce(2020, 1, 1);
+    }
+    if lower.contains("ukraine") || (lower.contains("russia") && lower.contains("invade")) {
+        return SimDate::from_ce(2022, 2, 24);
+    }
+    if lower.contains("fire") || lower.contains("homo erectus") {
+        return SimDate::from_bce(1900000, 1, 1);
+    }
+    if lower.contains("writing") || lower.contains("sumer") || lower.contains("mesopotamia") {
+        return SimDate::from_bce(3200, 1, 1);
+    }
+
+    // Default divergence fallback: 1945
+    SimDate::from_ce(1945, 1, 1)
+}
+
 /// Configuration for a fallback run.
 #[derive(Debug, Clone)]
 pub struct FallbackConfig {
@@ -488,6 +590,15 @@ mod tests {
         let i = analyze_prompt("What if the Nazis won in 1943?");
         assert_eq!(i.theme, "nazi_victory");
         assert_eq!(i.winner.as_deref(), Some("GER"));
+    }
+
+    #[test]
+    fn detect_divergence_identifies_dates_and_events() {
+        assert_eq!(detect_divergence("What if Rome never fell?"), SimDate::from_ce(476, 9, 4));
+        assert_eq!(detect_divergence("What if the Nazis won WWII?"), SimDate::from_ce(1939, 9, 1));
+        assert_eq!(detect_divergence("What if Columbus never reached America?"), SimDate::from_ce(1492, 10, 12));
+        assert_eq!(detect_divergence("What if in 1865 Lincoln survived?"), SimDate::from_ce(1865, 1, 1));
+        assert_eq!(detect_divergence("What if writing was invented in 3200 BCE in Egypt?"), SimDate::from_bce(3200, 1, 1));
     }
 
     #[test]

@@ -146,15 +146,20 @@ async fn status(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 struct CreateScenario {
     name: String,
     prompt: String,
-    divergence: String,
+    #[serde(default)]
+    divergence: Option<String>,
 }
 
 async fn create_scenario(
     State(st): State<Arc<AppState>>,
     Json(req): Json<CreateScenario>,
 ) -> Result<Json<Scenario>, (StatusCode, String)> {
-    let divergence = date_from_iso(&req.divergence)
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("bad date '{}'", req.divergence)))?;
+    let divergence = req
+        .divergence
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .and_then(date_from_iso)
+        .unwrap_or_else(|| worldsim_engine::detect_divergence(&req.prompt));
     let engine = st.engine.lock().unwrap();
     let sc = engine
         .create_scenario(&req.name, &req.prompt, divergence)

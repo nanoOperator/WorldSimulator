@@ -1389,7 +1389,7 @@ def build():
         "VALUES (?,?,?,?,?,?,?,?,?)",
         events,
     )
-    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.2.1-fixes')")
+    conn.execute("INSERT INTO meta VALUES ('seed_version', '1.3.0')")
     conn.commit()
     conn.close()
 

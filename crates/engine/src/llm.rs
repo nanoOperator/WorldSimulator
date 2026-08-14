@@ -9,15 +9,32 @@
 
 use crate::models::{ModelSpec, ModelRole};
 use crate::{EngineError, Result};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// A llama-server subprocess owned by the client; killed on drop.
+pub(crate) struct ManagedServer {
+    child: std::process::Child,
+    url: String,
+}
+
+impl Drop for ManagedServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 pub struct LlamaClient {
     pub models_dir: PathBuf,
     binary_dir: PathBuf,
     server_url: Option<String>,
     server_failed: AtomicBool,
+    managed_servers: Mutex<HashMap<String, ManagedServer>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -38,6 +55,7 @@ impl LlamaClient {
             binary_dir,
             server_url,
             server_failed: AtomicBool::new(false),
+            managed_servers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -74,7 +92,7 @@ impl LlamaClient {
         if !crate::models::model_available(&self.models_dir, spec) {
             return false;
         }
-        self.find_binary("llama-cli").is_some() || self.find_binary("llama-server").is_some()
+        self.find_binary("llama-server").is_some() || self.find_binary("llama-cli").is_some()
     }
 
     fn find_binary(&self, name: &str) -> Option<PathBuf> {
@@ -97,6 +115,104 @@ impl LlamaClient {
         None
     }
 
+    /// Ensure a llama-server instance is running for the requested model spec.
+    fn ensure_server(&self, spec: &ModelSpec) -> Result<Option<String>> {
+        if let Some(url) = &self.server_url {
+            if !self.server_failed.load(Ordering::SeqCst) {
+                return Ok(Some(url.clone()));
+            }
+        }
+
+        let mut servers = self
+            .managed_servers
+            .lock()
+            .map_err(|_| EngineError::Llm("mutex poisoned".into()))?;
+
+        if let Some(m) = servers.get(spec.id) {
+            let client = reqwest::blocking::Client::new();
+            let healthy = client
+                .get(format!("{}/health", m.url))
+                .timeout(Duration::from_millis(600))
+                .send()
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if healthy {
+                return Ok(Some(m.url.clone()));
+            }
+            // Stale server, remove and respawn
+            servers.remove(spec.id);
+        }
+
+        let Some(binary) = self.find_binary("llama-server") else {
+            return Ok(None);
+        };
+        let model_path = crate::models::model_path(&self.models_dir, spec);
+        if !model_path.is_file() {
+            return Err(EngineError::ModelUnavailable(spec.id.into()));
+        }
+
+        let port = pick_port()?;
+        let url = format!("http://127.0.0.1:{port}");
+        let ncpu = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(8);
+        let ctx_size = match spec.id {
+            "mustafakemal" => "4096",
+            "inalcik" => "2048",
+            _ => "2048",
+        };
+
+        let mut cmd = Command::new(&binary);
+        if self.lib_dir().is_dir() {
+            cmd.env("DYLD_LIBRARY_PATH", self.lib_dir());
+        }
+        cmd.arg("-m")
+            .arg(&model_path)
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("-c")
+            .arg(ctx_size)
+            .arg("-t")
+            .arg(ncpu.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let child = cmd.spawn().map_err(|e| EngineError::Llm(e.to_string()))?;
+        servers.insert(
+            spec.id.to_string(),
+            ManagedServer {
+                child,
+                url: url.clone(),
+            },
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let client = reqwest::blocking::Client::new();
+        loop {
+            let ok = client
+                .get(format!("{url}/health"))
+                .timeout(Duration::from_secs(1))
+                .send()
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if ok {
+                return Ok(Some(url));
+            }
+            if Instant::now() >= deadline {
+                servers.remove(spec.id);
+                return Err(EngineError::Llm(format!(
+                    "llama-server for {} did not become healthy in time",
+                    spec.id
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    }
+
     /// Run a completion with the given model. Returns None when unavailable.
     pub fn generate(
         &self,
@@ -107,15 +223,32 @@ impl LlamaClient {
         seed: u64,
         max_tokens: usize,
     ) -> Result<Option<LlmResult>> {
-        if let Some(url) = &self.server_url {
-            match self.generate_http(url, spec, system, prompt, temp, seed, max_tokens) {
-                Ok(r) => return Ok(Some(r)),
-                Err(e) => {
-                    self.server_failed.store(true, Ordering::SeqCst);
-                    log::warn!("llama-server failed, falling back to CLI: {e}");
+        // 1. Try managed llama-server (or external server) over HTTP.
+        match self.ensure_server(spec) {
+            Ok(Some(url)) => {
+                match self.generate_http(&url, spec, system, prompt, temp, seed, max_tokens) {
+                    Ok(r) => return Ok(Some(r)),
+                    Err(e) => {
+                        log::warn!(
+                            "llama-server HTTP failed for {}: {e}; trying CLI fallback",
+                            spec.id
+                        );
+                        if let Ok(mut servers) = self.managed_servers.lock() {
+                            servers.remove(spec.id);
+                        }
+                    }
                 }
             }
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!(
+                    "ensure_server failed for {}: {e}; falling back to CLI",
+                    spec.id
+                );
+            }
         }
+
+        // 2. CLI subprocess fallback.
         self.generate_cli(spec, system, prompt, temp, seed, max_tokens)
     }
 
@@ -187,9 +320,7 @@ impl LlamaClient {
         let full = format!("{system}\n\nUSER:\n{prompt}\nASSISTANT:");
         let started = std::time::Instant::now();
 
-        // Spawn the child and enforce a wall-clock timeout. If it hangs
-        // (e.g. model too large, OOM, or incompatible binary) we kill it and
-        // return Err so run_branch can fall back to deterministic mode.
+        // Spawn the child and enforce a wall-clock timeout.
         let mut child = {
             let mut cmd = Command::new(&binary);
             if self.lib_dir().is_dir() {
@@ -206,6 +337,7 @@ impl LlamaClient {
                 .arg("--seed")
                 .arg(seed.to_string())
                 .arg("--no-display-prompt")
+                .arg("--no-conversation")
                 .arg("--simple-io")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -236,6 +368,14 @@ impl LlamaClient {
             usage_ms: started.elapsed().as_millis() as u64,
         }))
     }
+}
+
+/// Pick a free ephemeral TCP port on localhost.
+pub(crate) fn pick_port() -> Result<u16> {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| EngineError::Llm(e.to_string()))?;
+    let port = l.local_addr().map_err(|e| EngineError::Llm(e.to_string()))?.port();
+    drop(l);
+    Ok(port)
 }
 
 /// Wait for a child process to finish, or kill it after `timeout` and return None.
@@ -274,4 +414,34 @@ pub(crate) fn wait_or_kill(
 
 pub fn role_of(spec: &ModelSpec) -> ModelRole {
     spec.role
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires ~/.worldsim/bin and ~/.worldsim/models"]
+    fn generate_live_mustafakemal() {
+        let home = std::env::var("HOME").expect("HOME");
+        let base = std::path::PathBuf::from(&home).join(".worldsim");
+        let models = base.join("models");
+        let bin = base.join("bin");
+        let client = LlamaClient::new(&models, &bin);
+        assert!(client.available(&crate::models::MUSTAFAKEMAL));
+        let res = client
+            .generate(
+                &crate::models::MUSTAFAKEMAL,
+                "You are an assistant.",
+                "Say 'Hello World' in JSON format: {\"greeting\": \"Hello World\"}",
+                0.2,
+                42,
+                64,
+            )
+            .expect("generate");
+        assert!(res.is_some());
+        let res = res.unwrap();
+        assert!(!res.text.is_empty());
+        println!("mustafakemal output (in {}ms): {}", res.usage_ms, res.text);
+    }
 }
